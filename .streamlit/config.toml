@@ -1,0 +1,17 @@
+# NHS design system palette, so the deployed app matches the local one.
+# service-manual.nhs.uk/design-system/styles/colour
+[theme]
+base = "light"
+primaryColor = "#005eb8"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f4f5"
+textColor = "#212b32"
+font = "sans serif"
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false

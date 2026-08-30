@@ -1,0 +1,304 @@
+# =============================================================================
+# SAATHI DETERMINISTIC RED-FLAG RULES
+# -----------------------------------------------------------------------------
+# CLINICIAN-AUTHORED. HUMAN-READABLE. UN-SUPPRESSIBLE BY ANY MODEL.
+#
+# These rules are evaluated by core/red_flags.py BEFORE the tabular model, the
+# fusion model, the confidence engine and the LLM. They run on raw gated
+# evidence. If every model in the stack fails, throws, or is switched off, these
+# still fire and still escalate. There is no code path by which a model output
+# can lower an acuity that a red flag has raised.
+#
+# Enforced by:
+#   tests/test_invariants.py::test_red_flag_supremacy
+#   tests/test_invariants.py::test_red_flags_fire_with_models_disabled
+# =============================================================================
+
+ruleset_version: "1.3"
+effective_from: "2026-01-01"
+authored_by: "ED consultant panel, SAATHI Clinical Governance Board"
+suppressible_by_model: false          # global. There is no per-rule override.
+
+rules:
+
+  - rule_id: RF_AIRWAY_STRIDOR
+    name: "Airway compromise"
+    trigger_human: "Stridor, OR unable to speak a full sentence."
+    trigger_machine:
+      any:
+        - { concept: COMPLAINT_SYMPTOM, op: contains, value: "stridor" }
+        - { concept: ATTENDANT_SYMPTOM, op: contains, value: "stridor" }
+        - { concept: COMPLAINT_SYMPTOM, op: contains, value: "cannot_speak_full_sentence" }
+    source_channel: [nurse, camera, attendant]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 1
+    rationale: >-
+      Airway precedes everything. No model output modifies this. Note what was
+      REMOVED from this rule in v1.1: visible accessory muscle use at grade 2.
+      It is a serious finding and it is not the same finding as stridor - a
+      breathless asthmatic using accessory muscles needs an emergent bay, not a
+      resuscitation room, and conflating the two sent roughly one arrival in ten
+      to level 1 in evaluation. Grade 2 work of breathing now has its own rule
+      below, at level 2, which is where it belongs.
+    version: "1.1"
+
+  - rule_id: RF_RESPIRATORY_DISTRESS
+    name: "Visible respiratory distress"
+    trigger_human: "Accessory muscle use, recession, nasal flaring or tripod posture at grade 2 or above."
+    trigger_machine:
+      any:
+        - { concept: WORK_OF_BREATHING, op: gte, value: 2 }
+    source_channel: [nurse, camera]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 2
+    rationale: >-
+      Emergent, not resuscitation. This is the highest-yield thing a camera at
+      the door sees for free, and it is worth a level 2 on its own - but a
+      finding that fires on roughly one arrival in twenty cannot be allowed to
+      claim the resuscitation room, or it will be switched off within a week.
+    version: "1.0"
+
+  - rule_id: RF_SPO2_CRITICAL
+    name: "Critical hypoxaemia"
+    trigger_human: "SpO2 below the age-band critical floor on a device-measured reading."
+    trigger_machine:
+      all:
+        - { concept: SPO2, op: age_band_critical }
+        - { concept: SPO2, op: acquisition_in, value: [cuff] }
+    source_channel: [nurse]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 1
+    rationale: "Device-measured critical hypoxaemia. rPPG is deliberately NOT an accepted source for this rule."
+    version: "1.0"
+
+  - rule_id: RF_AVPU_DOWNGRADE
+    name: "Reduced level of consciousness"
+    trigger_human: "AVPU is P or U, or has fallen from A at any point during the wait."
+    trigger_machine:
+      any:
+        - { concept: AVPU, op: in, value: ["P", "U"] }
+        - { concept: AVPU, op: worsened_from_baseline }
+    source_channel: [nurse]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 1
+    rationale: "Any fall in consciousness is a resuscitation-room problem until proven otherwise."
+    version: "1.0"
+
+  - rule_id: RF_UNRESPONSIVE_PROXY
+    name: "Family reports the patient will not respond"
+    trigger_human: "Attendant answers NO to 'Does he answer when you call his name?'"
+    trigger_machine:
+      all:
+        - { concept: RESPONDS_TO_NAME, op: eq, value: false }
+    source_channel: [attendant]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 1
+    rationale: >-
+      The family is the only channel physically beside the patient. A proxy
+      report of unresponsiveness is acted on immediately and verified by a nurse.
+      This rule is intentionally high-sensitivity and low-specificity: the cost
+      of a wasted nurse walk is far below the cost of a missed arrest.
+    version: "1.0"
+
+  - rule_id: RF_FRANK_HYPOTENSION
+    name: "Frank hypotension"
+    trigger_human: "Systolic pressure below the age-band critical floor."
+    trigger_machine:
+      all:
+        - { concept: SBP, op: age_band_critical }
+    source_channel: [nurse]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 1
+    rationale: >-
+      Measured hypotension for age. Device-measured and fresh only. In the
+      paediatric bands this fires LATE by design - it is a confirmation, not a
+      warning, and RF_PAEDS_COMPENSATED_SHOCK is the rule that is supposed to
+      fire first.
+    version: "1.1"
+
+  - rule_id: RF_SHOCK_INDEX_RAISED
+    name: "Raised shock index with maintained pressure"
+    trigger_human: "Shock index above the age-band critical ceiling while the systolic pressure is still above its critical floor."
+    trigger_machine:
+      all:
+        - { concept: SHOCK_INDEX, op: age_band_critical }
+    source_channel: [nurse]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 2
+    rationale: >-
+      DELIBERATELY LEVEL 2, NOT LEVEL 1. A raised shock index with a pressure
+      that is still holding describes a patient who is COMPENSATING - they need
+      an emergent assessment, not a resuscitation bay, and putting them in one
+      takes it from someone who needs it. This split matters most in the 65+
+      bands, where a blunted tachycardic response means the index rises on a
+      background of unimpressive numbers. SHOCK_INDEX is never computed from an
+      imputed component; if either input failed its gate, this rule cannot fire.
+    version: "1.1"
+
+  - rule_id: RF_PAEDS_COMPENSATED_SHOCK
+    name: "Paediatric compensated shock"
+    trigger_human: >-
+      Child under 12 with tachycardia AND tachypnoea for age AND capillary refill
+      over 3 seconds - EVEN IF the blood pressure is normal.
+    trigger_machine:
+      all:
+        - { concept: _age_band, op: in, value: [age_0_1, age_1_5, age_5_12] }
+        - { concept: HEART_RATE, op: age_band_at_least_concerning }
+        - { concept: RESP_RATE, op: age_band_at_least_concerning }
+        - { concept: CAP_REFILL, op: age_band_critical }
+    source_channel: [nurse]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 2
+    rationale: >-
+      THE THRESHOLD-MASKING RULE. Children maintain blood pressure until they
+      decompensate abruptly. A rule engine that waits for paediatric hypotension
+      is a rule engine that reports arrests. This rule deliberately fires while
+      the blood pressure is still normal, and it exists precisely because the
+      tabular model - trained on an adult-dominated population - under-weights
+      this pattern.
+    version: "1.1"
+
+  - rule_id: RF_INFANT_FEVER
+    name: "Fever in an infant"
+    trigger_human: "Temperature at or above 38.0 degC in a patient under one year."
+    trigger_machine:
+      all:
+        - { concept: _age_band, op: in, value: [age_0_1] }
+        - { concept: TEMP, op: gte, value: 38.0 }
+    source_channel: [nurse]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 2
+    rationale: "Appearance is unreliable in this band. The number alone is sufficient."
+    version: "1.0"
+
+  - rule_id: RF_ELDERLY_HYPOTHERMIA
+    name: "Hypothermia in an older adult"
+    trigger_human: "Temperature below 36.0 degC in a patient aged 65 or older."
+    trigger_machine:
+      all:
+        - { concept: _age_band, op: in, value: [age_65_80, age_80_plus] }
+        - { concept: TEMP, op: lt, value: 36.0 }
+    source_channel: [nurse]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 2
+    rationale: "Hypothermic sepsis. The blunted febrile response means the absence of fever is not reassuring; a low temperature is actively alarming."
+    version: "1.0"
+
+  - rule_id: RF_NEW_CONFUSION_ELDERLY
+    name: "New confusion in an older adult"
+    trigger_human: "Family reports new confusion, or inability to state their own name, in a patient aged 65 or older."
+    trigger_machine:
+      all:
+        - { concept: _age_band, op: in, value: [age_65_80, age_80_plus] }
+        - { concept: CONFUSION_NEW, op: eq, value: true }
+    source_channel: [attendant, nurse]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 2
+    rationale: >-
+      Delirium is frequently the ONLY presenting sign of serious infection in
+      this band. This is the rule that answers the NHS Martha's Rule finding
+      that 82% of family-raised deterioration alerts would not have tripped a
+      standard vital-sign early warning score. It fires on a family report with
+      entirely normal vital signs, by design.
+    version: "1.1"
+
+  - rule_id: RF_SEIZURE_ACTIVE
+    name: "Active seizure"
+    trigger_human: "Seizure activity reported by any channel."
+    trigger_machine:
+      any:
+        - { concept: COMPLAINT_SYMPTOM, op: contains, value: "seizure_active" }
+        - { concept: ATTENDANT_SYMPTOM, op: contains, value: "seizure_active" }
+    source_channel: [nurse, attendant, camera]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 1
+    rationale: "Time-critical. Acted on from any channel without corroboration."
+    version: "1.0"
+
+  - rule_id: RF_CHEST_PAIN_HIGH_RISK
+    name: "Chest pain with high-risk features"
+    trigger_human: "Central chest pain in a patient aged 35 or over, with diaphoresis, radiation, or dyspnoea."
+    trigger_machine:
+      all:
+        - { concept: COMPLAINT_SYMPTOM, op: contains, value: "chest_pain_central" }
+        - { concept: _age_years, op: gte, value: 35 }
+      any:
+        - { concept: COMPLAINT_SYMPTOM, op: contains, value: "diaphoresis" }
+        - { concept: COMPLAINT_SYMPTOM, op: contains, value: "radiation_arm_jaw" }
+        - { concept: COMPLAINT_SYMPTOM, op: contains, value: "dyspnoea" }
+    source_channel: [nurse]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 2
+    rationale: "Time-dependent pathway. Deliberately over-triages; the cost asymmetry supports it."
+    version: "1.0"
+
+  - rule_id: RF_HAEMORRHAGE_ACTIVE
+    name: "Active uncontrolled haemorrhage"
+    trigger_human: "Uncontrolled external bleeding reported by any channel."
+    trigger_machine:
+      any:
+        - { concept: COMPLAINT_SYMPTOM, op: contains, value: "bleeding_uncontrolled" }
+        - { concept: ATTENDANT_SYMPTOM, op: contains, value: "bleeding_uncontrolled" }
+    source_channel: [nurse, attendant]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 1
+    rationale: "Time-critical."
+    version: "1.0"
+
+  - rule_id: RF_PREGNANCY_BLEEDING
+    name: "Bleeding in pregnancy"
+    trigger_human: "Any vaginal bleeding reported in a patient known or stated to be pregnant."
+    trigger_machine:
+      all:
+        - { concept: COMPLAINT_SYMPTOM, op: contains, value: "pregnant" }
+        - { concept: COMPLAINT_SYMPTOM, op: contains, value: "bleeding_pv" }
+    source_channel: [nurse, attendant]
+    action: IMMEDIATE_ESCALATE
+    target_acuity: 2
+    rationale: "Two patients. High consequence, low cost to over-triage."
+    version: "1.0"
+
+# -----------------------------------------------------------------------------
+# STALENESS / SLA RULES
+# Deterministic, and independent of every model. These fire on the clock alone.
+# -----------------------------------------------------------------------------
+time_rules:
+
+  - rule_id: TR_SLA_BREACH
+    name: "Maximum safe wait exceeded for current acuity"
+    trigger_human: "Wait time has exceeded the maximum safe interval for the patient's current acuity level."
+    action: MANDATORY_RECHECK
+    escalates_acuity: false
+    rationale: >-
+      An SLA breach forces a human re-assessment. It does NOT by itself raise
+      acuity - nothing clinical has changed, only the clock. Conflating 'waited
+      too long' with 'sicker' would corrupt the acuity signal. P-013 in the
+      cohort demonstrates exactly this distinction.
+    version: "1.0"
+
+  - rule_id: TR_NO_HUMAN_CONTACT
+    name: "Prolonged absence of human contact"
+    trigger_human: "No nurse or clinician has physically assessed this patient for longer than twice their re-check interval."
+    action: MANDATORY_RECHECK
+    escalates_acuity: false
+    version: "1.0"
+
+  - rule_id: TR_ALL_CHANNELS_SILENT
+    name: "All channels silent"
+    trigger_human: "No channel has produced any observation for 10 minutes."
+    action: MANDATORY_RECHECK
+    escalates_acuity: false
+    rationale: "Silence is not stability. It is absence of information, and it moves the patient toward a human."
+    version: "1.0"
+
+  - rule_id: TR_CONSENT_DECLINED_COMPENSATION
+    name: "Consent declined - compensating re-check"
+    trigger_human: "Patient or family has declined camera and attendant channels."
+    action: SHORTEN_RECHECK_INTERVAL
+    factor: 0.5
+    escalates_acuity: false
+    rationale: >-
+      Opting out must cost the patient nothing. It removes SAATHI's ability to
+      watch them, so the human re-check interval is HALVED to compensate. Queue
+      position is unaffected. P-018 demonstrates this.
+    version: "1.0"

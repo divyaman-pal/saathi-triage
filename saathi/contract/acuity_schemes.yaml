@@ -1,0 +1,164 @@
+# =============================================================================
+# SAATHI ACUITY SCHEME REGISTRY
+# -----------------------------------------------------------------------------
+# Prevents four different things called "urgent" from being silently treated as
+# the same label. Every acuity value in the system is a triple:
+#     (scheme_id, scheme_version, level)
+# A bare integer acuity is REJECTED by the Pydantic model in core/models.py.
+#
+# Cross-scheme mapping is explicit, versioned, and LOSSY BY DECLARATION. Each
+# mapping edge carries a fidelity marker and a note describing what is lost.
+# =============================================================================
+
+registry_version: "1.1"
+effective_from: "2026-01-01"
+
+schemes:
+
+  ESI:
+    scheme_id: ESI
+    scheme_version: v4
+    name: "Emergency Severity Index"
+    origin: "United States"
+    n_levels: 5
+    direction: "lower_is_more_urgent"
+    is_native: true                 # SAATHI computes natively in this scheme
+    levels:
+      1: { label: "Resuscitation",  description: "Requires immediate life-saving intervention." }
+      2: { label: "Emergent",       description: "High risk, or confused/lethargic/disoriented, or severe pain/distress." }
+      3: { label: "Urgent",         description: "Stable, but expected to require two or more resources." }
+      4: { label: "Less urgent",    description: "Expected to require one resource." }
+      5: { label: "Non-urgent",     description: "Expected to require no resources." }
+    note: >-
+      ESI levels 3-5 are RESOURCE PREDICTIONS, not severity statements. This is
+      a well-known property of the instrument and it means ESI 3 vs ESI 4 is not
+      a pure acuity ordering. SAATHI's EWER rank is computed independently of
+      this and is not a re-derivation of the ESI ordering.
+
+  MTS:
+    scheme_id: MTS
+    scheme_version: v3
+    name: "Manchester Triage System"
+    origin: "United Kingdom"
+    n_levels: 5
+    direction: "lower_is_more_urgent"
+    is_native: false
+    levels:
+      1: { label: "Red / Immediate",  target_minutes: 0 }
+      2: { label: "Orange / Very urgent", target_minutes: 10 }
+      3: { label: "Yellow / Urgent",  target_minutes: 60 }
+      4: { label: "Green / Standard", target_minutes: 120 }
+      5: { label: "Blue / Non-urgent", target_minutes: 240 }
+    note: "Flowchart-and-discriminator based. Encodes a target time, which ESI does not."
+
+  CTAS:
+    scheme_id: CTAS
+    scheme_version: "2016"
+    name: "Canadian Triage and Acuity Scale"
+    origin: "Canada"
+    n_levels: 5
+    direction: "lower_is_more_urgent"
+    is_native: false
+    levels:
+      1: { label: "Resuscitation", target_minutes: 0 }
+      2: { label: "Emergent",      target_minutes: 15 }
+      3: { label: "Urgent",        target_minutes: 30 }
+      4: { label: "Less urgent",   target_minutes: 60 }
+      5: { label: "Non-urgent",    target_minutes: 120 }
+
+  LOCAL3:
+    scheme_id: LOCAL3
+    scheme_version: "district-v1"
+    name: "Local three-colour code"
+    origin: "Representative Indian district hospital"
+    n_levels: 3
+    direction: "lower_is_more_urgent"
+    is_native: false
+    levels:
+      1: { label: "Red",    description: "See now." }
+      2: { label: "Yellow", description: "See soon." }
+      3: { label: "Green",  description: "Can wait." }
+    note: >-
+      Three levels cannot represent five. Any mapping into this scheme is
+      IRREVERSIBLY LOSSY and is marked as such on every edge below. This is the
+      real-world Tier C target and the reason the registry exists.
+
+  FREETEXT:
+    scheme_id: FREETEXT
+    scheme_version: "none"
+    name: "Unstructured urgency word"
+    origin: "Handwritten register / verbal handover"
+    n_levels: null
+    direction: "undefined"
+    is_native: false
+    note: >-
+      'urgent', 'serious', 'emergency' written on a card. NOT A SCHEME. Values
+      of this type are accepted for display and audit only, are never numerically
+      compared, and can never be an input to scoring. Represented as
+      scheme_id=FREETEXT with the literal string preserved.
+
+# -----------------------------------------------------------------------------
+# CROSS-SCHEME MAPPINGS
+# fidelity: EXACT | APPROXIMATE | LOSSY | UNSAFE
+# Mappings marked UNSAFE are registered so the system can REFUSE them explicitly
+# rather than fail silently.
+# -----------------------------------------------------------------------------
+mappings:
+
+  - from: { scheme_id: ESI, scheme_version: v4 }
+    to:   { scheme_id: MTS, scheme_version: v3 }
+    fidelity: APPROXIMATE
+    map: { 1: 1, 2: 2, 3: 3, 4: 4, 5: 5 }
+    lost_in_translation: >-
+      ESI 3-5 encode expected RESOURCE USE; MTS 3-5 encode TARGET WAIT TIME
+      derived from presentational discriminators. A patient who is ESI 3 because
+      they need an X-ray and bloods, but is entirely comfortable, is not MTS
+      Yellow on clinical grounds. The numbers align; the meanings do not.
+    reviewed_by: "SAATHI Clinical Governance Board"
+    version: "1.0"
+
+  - from: { scheme_id: ESI, scheme_version: v4 }
+    to:   { scheme_id: CTAS, scheme_version: "2016" }
+    fidelity: APPROXIMATE
+    map: { 1: 1, 2: 2, 3: 3, 4: 4, 5: 5 }
+    lost_in_translation: >-
+      CTAS carries explicit reassessment intervals per level which ESI does not.
+      Mapping ESI to CTAS silently invents a reassessment obligation that the
+      source instrument never asserted. SAATHI therefore uses its own SLA table
+      in cost_policy.yaml rather than inheriting CTAS timings through this edge.
+    version: "1.0"
+
+  - from: { scheme_id: ESI, scheme_version: v4 }
+    to:   { scheme_id: LOCAL3, scheme_version: "district-v1" }
+    fidelity: LOSSY
+    map: { 1: 1, 2: 1, 3: 2, 4: 3, 5: 3 }
+    lost_in_translation: >-
+      IRREVERSIBLE. ESI 1 and ESI 2 both collapse to Red; ESI 4 and ESI 5 both
+      collapse to Green. Round-tripping LOCAL3 back to ESI is registered as
+      UNSAFE below and is refused by the system. Where a Tier C site displays
+      LOCAL3, SAATHI retains the native ESI triple internally for audit and
+      lineage, and renders LOCAL3 only at the display layer.
+    version: "1.0"
+
+  - from: { scheme_id: LOCAL3, scheme_version: "district-v1" }
+    to:   { scheme_id: ESI, scheme_version: v4 }
+    fidelity: UNSAFE
+    map: null
+    refuse: true
+    refusal_reason: >-
+      Three levels cannot be expanded into five without inventing clinical
+      information that was never recorded. A request for this conversion raises
+      SchemeMappingRefused and writes an audit event. It does not return a
+      best guess.
+    version: "1.0"
+
+  - from: { scheme_id: FREETEXT, scheme_version: "none" }
+    to:   { scheme_id: ESI, scheme_version: v4 }
+    fidelity: UNSAFE
+    map: null
+    refuse: true
+    refusal_reason: >-
+      'Urgent' written on a card has no defined operational meaning, no
+      inter-rater reliability, and no version. It is displayed verbatim and
+      excluded from all computation.
+    version: "1.0"

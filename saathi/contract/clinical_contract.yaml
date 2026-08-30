@@ -1,0 +1,943 @@
+# =============================================================================
+# SAATHI CLINICAL SEMANTIC CONTRACT
+# -----------------------------------------------------------------------------
+# This file is NOT documentation. It is loaded at runtime by
+# saathi/core/contract_loader.py and drives:
+#   - age-band threshold evaluation      (core/age_bands.py)
+#   - signal quality gating              (core/signal_quality.py)
+#   - staleness gating                   (core/freshness.py)
+#   - feature assembly for the models    (core/features.py)
+#   - reliability weighting in fusion    (core/fusion.py)
+#   - field-level access control         (core/rbac.py)
+#   - materiality-based escalation       (core/escalation.py)
+#
+# No vital-sign threshold appears anywhere in Python source. If a threshold is
+# wrong, it is fixed here, versioned here, and the change is auditable here.
+# =============================================================================
+
+contract_version: "2.0.1"
+effective_from: "2026-01-01"
+owner: "SAATHI Clinical Governance Board (clinician-authored)"
+review_cadence_days: 90
+last_clinical_review: "2026-01-15"
+
+# -----------------------------------------------------------------------------
+# AGE BANDS
+# Every threshold below is a function of these bands. Never of raw age.
+# -----------------------------------------------------------------------------
+age_bands:
+  - id: age_0_1
+    label: "Infant (0-1 y)"
+    min_years: 0
+    max_years: 1
+    physiology_note: "Highest baseline HR/RR. Fever in <3 months is a red flag in itself. Hypotension is a very late sign."
+  - id: age_1_5
+    label: "Toddler / preschool (1-5 y)"
+    min_years: 1
+    max_years: 5
+    physiology_note: "Compensates shock by tachycardia and vasoconstriction. Blood pressure stays normal until decompensation is imminent."
+  - id: age_5_12
+    label: "School age (5-12 y)"
+    min_years: 5
+    max_years: 12
+    physiology_note: "Still compensates well. Tachypnoea is the earliest reliable sign."
+  - id: age_12_18
+    label: "Adolescent (12-18 y)"
+    min_years: 12
+    max_years: 18
+    physiology_note: "Approaching adult physiology. Anxiety-driven tachycardia is common and must be discriminated."
+  - id: age_18_65
+    label: "Adult (18-65 y)"
+    min_years: 18
+    max_years: 65
+    physiology_note: "Reference band. Most published triage instruments are calibrated here."
+  - id: age_65_80
+    label: "Older adult (65-80 y)"
+    min_years: 65
+    max_years: 80
+    physiology_note: >-
+      Blunted physiological response. Beta-blockade and reduced chronotropic
+      reserve suppress tachycardia. Baseline hypertension means a 'normal' BP
+      may represent relative hypotension. ABSENCE of an abnormal vital does NOT
+      lower risk in this band.
+  - id: age_80_plus
+    label: "Very old adult (80+ y)"
+    min_years: 80
+    max_years: 130
+    physiology_note: >-
+      As age_65_80, more strongly. Delirium is frequently the only presenting
+      sign of serious infection. A proxy report of new confusion in this band is
+      treated as high clinical materiality regardless of vital signs.
+
+# -----------------------------------------------------------------------------
+# ACQUISITION METHODS
+# Reliability weights and quality floors live here, not in the fusion code.
+# -----------------------------------------------------------------------------
+acquisition_methods:
+  manual_count:
+    channel: nurse
+    reliability_weight: 1.00
+    quality_floor: null
+    note: "Nurse-counted. Treated as reference standard in this contract."
+  cuff:
+    channel: nurse
+    reliability_weight: 1.00
+    quality_floor: null
+    note: "Paired oscillometric NIBP / pulse oximeter."
+  clinical_observation:
+    channel: nurse
+    reliability_weight: 1.00
+    quality_floor: null
+  rppg_hr:
+    channel: camera
+    reliability_weight: 0.60
+    quality_floor: { metric: snr_db, min: 3.0 }
+    note: >-
+      Remote photoplethysmography heart rate. Published support exists under
+      controlled illumination and low motion. Waiting-room conditions are
+      neither. Weighted below nurse measurement and gated hard on SNR.
+  rppg_rr:
+    channel: camera
+    reliability_weight: 0.35
+    quality_floor: { metric: snr_db, min: 4.0 }
+    note: >-
+      DELIBERATELY LOW WEIGHT AND HIGH FLOOR. Respiratory rate derived from
+      video in a crowded, poorly lit waiting room does not have the evidence
+      base that rPPG heart rate has. SAATHI treats it as a trend-detection
+      signal, never as a measurement of record. It can raise urgency; it can
+      never be the sole basis for a numeric RR claim to a clinician without the
+      DEGRADED qualifier attached.
+  pose_estimation:
+    channel: camera
+    reliability_weight: 0.55
+    quality_floor: { metric: occlusion_pct, max: 40 }
+    note: "Skeleton keypoints for posture, stillness, work of breathing, arrival mode."
+  gestalt_arrival:
+    channel: camera
+    reliability_weight: 0.65
+    quality_floor: { metric: occlusion_pct, max: 30 }
+    note: "Single ~5-10 s pass at the door. Highest-yield free visual signal."
+  guided_count_15s:
+    channel: attendant
+    reliability_weight: 0.50
+    quality_floor: null
+    calibration: per_reporter
+    note: "Attendant counts breaths for 15 s on a timed prompt, x4. Calibrated per reporter over the visit."
+  proxy_report:
+    channel: attendant
+    reliability_weight: 0.70
+    quality_floor: null
+    calibration: per_reporter
+    note: >-
+      Family observation of a discrete, observable state change (confusion,
+      sleepiness, responsiveness). Statistically weak, clinically material.
+      Handled by the materiality path, not the statistical path.
+  self_report:
+    channel: nurse
+    reliability_weight: 0.40
+    quality_floor: null
+    note: >-
+      Patient's own account of pain or symptoms. Known to be systematically
+      under-reported by stoic presentations, male patients in some populations,
+      and patients worried about cost. Low weight BY DESIGN.
+  asr:
+    channel: nurse
+    reliability_weight: 0.75
+    quality_floor: { metric: asr_confidence, min: 0.55 }
+    note: "Multilingual ASR with code-mix normalisation. Below floor the complaint is marked partially unparsed."
+  record_lookup:
+    channel: prior_record
+    reliability_weight: 0.80
+    quality_floor: null
+    note: "ABHA / HMIS lookup. May be months stale. Staleness discounts the weight, see max_staleness_minutes."
+  deterministic:
+    channel: system
+    reliability_weight: 1.00
+    quality_floor: null
+    note: "Computed by the system clock or by contract arithmetic. Cannot fail silently."
+
+# -----------------------------------------------------------------------------
+# CONCEPTS
+# -----------------------------------------------------------------------------
+concepts:
+
+  HEART_RATE:
+    name: "Heart rate"
+    definition: "Ventricular contractions per minute, averaged over the stated observation window."
+    type: vital
+    unit: "bpm"
+    grain: "patient x observation_window"
+    source_channel: [nurse, camera, attendant]
+    acquisition_method: [cuff, manual_count, rppg_hr]
+    refresh_cadence_seconds: 60
+    max_staleness_minutes: 15
+    materiality_threshold: 10          # bpm; a sustained change below this is instrument noise, not clinical news
+    materiality_class: MODERATE
+    statistical_power: STRONG
+    contributes_to: [tabular_risk, shock_index, trajectory]
+    escalation_thresholds:
+      delta_trigger: "+20 bpm sustained over any 20-minute window -> mandatory nurse re-check"
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      age_0_1:     { normal: [100, 160], concerning: [[90, 99], [161, 180]],  critical: { gt: 180, lt: 90 } }
+      age_1_5:     { normal: [90, 150],  concerning: [[80, 89], [151, 170]],  critical: { gt: 170, lt: 80 } }
+      age_5_12:    { normal: [70, 120],  concerning: [[60, 69], [121, 140]],  critical: { gt: 140, lt: 60 } }
+      age_12_18:   { normal: [60, 105],  concerning: [[50, 59], [106, 130]],  critical: { gt: 130, lt: 50 } }
+      age_18_65:   { normal: [60, 100],  concerning: [[50, 59], [101, 120]],  critical: { gt: 120, lt: 50 } }
+      age_65_80:   { normal: [60, 100],  concerning: [[50, 59], [101, 110]],  critical: { gt: 110, lt: 50 },
+                     note: "Chronotropic incompetence and beta-blockade blunt tachycardia. An unimpressive heart rate does not exclude shock." }
+      age_80_plus: { normal: [60, 100],  concerning: [[50, 59], [101, 110]],  critical: { gt: 110, lt: 50 },
+                     note: "As age_65_80. Absence of tachycardia carries no reassuring value in this band." }
+    version: "2.0"
+    lineage: "raw device reading or rPPG window -> quality gate -> feature assembly"
+
+  RESP_RATE:
+    name: "Respiratory rate"
+    definition: "Breaths per minute over a 30-second observation window, doubled."
+    type: vital
+    unit: "breaths/min"
+    grain: "patient x 30s_window"
+    source_channel: [nurse, camera, attendant]
+    acquisition_method: [manual_count, rppg_rr, guided_count_15s]
+    refresh_cadence_seconds: 60
+    max_staleness_minutes: 15
+    materiality_threshold: 4
+    materiality_class: HIGH
+    statistical_power: STRONG
+    contributes_to: [tabular_risk, trajectory, work_of_breathing_composite]
+    materiality_note: >-
+      A sustained rise in respiratory rate is the single earliest and most
+      reliable warning of deterioration in an adult, and it is the one a triage
+      snapshot cannot see because it only exists as a TREND. Declaring it HIGH
+      materiality with STRONG statistical support is what routes it to
+      ESCALATE in the matrix - the measured-trend counterpart of the family's
+      report of new confusion.
+    escalation_thresholds:
+      delta_trigger: "+6 breaths/min over any 20-minute window -> mandatory nurse re-check"
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      age_0_1:     { normal: [30, 60], concerning: [[25, 29], [61, 70]], critical: { gt: 70, lt: 25 } }
+      age_1_5:     { normal: [20, 30], concerning: [[16, 19], [31, 40]], critical: { gt: 40, lt: 15 } }
+      age_5_12:    { normal: [18, 25], concerning: [[13, 17], [26, 32]], critical: { gt: 32, lt: 12 } }
+      age_12_18:   { normal: [12, 20], concerning: [[10, 11], [21, 24]], critical: { gt: 24, lt: 9 } }
+      age_18_65:   { normal: [12, 20], concerning: [[9, 11],  [21, 24]], critical: { gt: 24, lt: 8 } }
+      age_65_80:   { normal: [12, 20], concerning: [[9, 11],  [21, 24]], critical: { gt: 24, lt: 8 },
+                     note: "Blunted response - absence of tachypnoea does not lower risk." }
+      age_80_plus: { normal: [12, 20], concerning: [[9, 11],  [21, 24]], critical: { gt: 24, lt: 8 },
+                     note: "Blunted response - absence of tachypnoea does not lower risk." }
+    version: "2.0"
+    lineage: "nurse count | rPPG window | attendant guided count -> quality gate -> feature assembly"
+
+  SPO2:
+    name: "Peripheral oxygen saturation"
+    definition: "SpO2 by pulse oximetry on room air unless otherwise recorded."
+    type: vital
+    unit: "%"
+    grain: "patient x observation_window"
+    source_channel: [nurse]
+    acquisition_method: [cuff]
+    refresh_cadence_seconds: null
+    max_staleness_minutes: 20
+    materiality_threshold: 3
+    materiality_class: CRITICAL
+    statistical_power: STRONG
+    contributes_to: [tabular_risk]
+    escalation_thresholds:
+      delta_trigger: "-3% from arrival value -> mandatory nurse re-check"
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      age_0_1:     { normal: [95, 100], concerning: [[91, 94]], critical: { lt: 91 } }
+      age_1_5:     { normal: [95, 100], concerning: [[91, 94]], critical: { lt: 91 } }
+      age_5_12:    { normal: [95, 100], concerning: [[91, 94]], critical: { lt: 91 } }
+      age_12_18:   { normal: [95, 100], concerning: [[91, 94]], critical: { lt: 91 } }
+      age_18_65:   { normal: [95, 100], concerning: [[91, 94]], critical: { lt: 91 } }
+      age_65_80:   { normal: [94, 100], concerning: [[90, 93]], critical: { lt: 90 },
+                     note: "Chronic lung disease is common in this band. A known-COPD baseline must be recorded before 92% is treated as normal for that individual." }
+      age_80_plus: { normal: [94, 100], concerning: [[90, 93]], critical: { lt: 90 } }
+    version: "2.0"
+    lineage: "paired pulse oximeter -> nurse confirm -> feature assembly"
+
+  SBP:
+    name: "Systolic blood pressure"
+    definition: "Non-invasive systolic arterial pressure."
+    type: vital
+    unit: "mmHg"
+    grain: "patient x observation_window"
+    source_channel: [nurse]
+    acquisition_method: [cuff]
+    refresh_cadence_seconds: null
+    max_staleness_minutes: 30
+    materiality_threshold: 15
+    materiality_class: CRITICAL
+    statistical_power: STRONG
+    contributes_to: [tabular_risk, shock_index]
+    escalation_thresholds:
+      delta_trigger: "-20 mmHg from arrival value -> mandatory nurse re-check"
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      age_0_1:     { normal: [70, 100],  concerning: [[60, 69]],   critical: { lt: 60 },
+                     note: "Hypotension in infants is a pre-terminal sign. Do not wait for it." }
+      age_1_5:     { normal: [75, 110],  concerning: [[65, 74]],   critical: { lt: 65 },
+                     note: "CRITICAL FOR SAFETY: paediatric shock is compensated. A NORMAL systolic pressure does not exclude shock. Use HR, RR and capillary refill." }
+      age_5_12:    { normal: [85, 120],  concerning: [[75, 84]],   critical: { lt: 75 },
+                     note: "Compensated shock possible with normal BP." }
+      age_12_18:   { normal: [90, 130],  concerning: [[80, 89]],   critical: { lt: 80 } }
+      age_18_65:   { normal: [100, 140], concerning: [[90, 99], [141, 180]], critical: { lt: 90, gt: 220 } }
+      age_65_80:   { normal: [110, 150], concerning: [[100, 109], [151, 190]], critical: { lt: 100, gt: 220 },
+                     note: "Chronic hypertension raises the autoregulatory floor. 105 mmHg in a habitually hypertensive 75-year-old may represent significant relative hypotension." }
+      age_80_plus: { normal: [110, 150], concerning: [[100, 109], [151, 190]], critical: { lt: 100, gt: 220 },
+                     note: "As age_65_80." }
+    version: "2.0"
+    lineage: "NIBP cuff -> nurse confirm -> feature assembly"
+
+  TEMP:
+    name: "Core-proxy temperature"
+    definition: "Tympanic or axillary temperature, method recorded."
+    type: vital
+    unit: "degC"
+    grain: "patient x observation_window"
+    source_channel: [nurse]
+    acquisition_method: [cuff]
+    refresh_cadence_seconds: null
+    max_staleness_minutes: 60
+    materiality_threshold: 0.5
+    contributes_to: [tabular_risk]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      age_0_1:     { normal: [36.5, 37.5], concerning: [[37.6, 37.9]], critical: { gte: 38.0, lt: 36.0 },
+                     note: "Fever >=38.0 in an infant is itself an escalation trigger, independent of appearance." }
+      age_1_5:     { normal: [36.5, 37.5], concerning: [[37.6, 38.9]], critical: { gte: 39.5, lt: 36.0 } }
+      age_5_12:    { normal: [36.3, 37.5], concerning: [[37.6, 38.9]], critical: { gte: 39.5, lt: 35.8 } }
+      age_12_18:   { normal: [36.1, 37.5], concerning: [[37.6, 38.9]], critical: { gte: 39.5, lt: 35.5 } }
+      age_18_65:   { normal: [36.1, 37.5], concerning: [[37.6, 38.9]], critical: { gte: 39.5, lt: 35.5 } }
+      age_65_80:   { normal: [36.1, 37.2], concerning: [[37.3, 38.4]], critical: { gte: 38.5, lt: 36.0 },
+                     note: "Blunted febrile response. Reaching 38.5 degC in this band implies a larger inflammatory insult than the same reading in a young adult, and is treated as critical. Equally, a NORMAL temperature does not exclude sepsis here, and hypothermia below 36.0 is an independent danger sign." }
+      age_80_plus: { normal: [36.1, 37.2], concerning: [[37.3, 38.4]], critical: { gte: 38.5, lt: 36.0 },
+                     note: "As age_65_80. Hypothermic sepsis is a recognised presentation in this band." }
+    version: "2.0"
+    lineage: "thermometer -> nurse confirm -> feature assembly"
+
+  AVPU:
+    name: "AVPU responsiveness"
+    definition: "Alert / responds to Voice / responds to Pain / Unresponsive."
+    type: observation
+    unit: "ordinal"
+    value_set: ["A", "V", "P", "U"]
+    grain: "patient x observation_window"
+    source_channel: [nurse]
+    acquisition_method: [clinical_observation]
+    max_staleness_minutes: 15
+    materiality_threshold: 1
+    contributes_to: [tabular_risk, red_flag_evaluation]
+    escalation_thresholds:
+      delta_trigger: "any downgrade from A -> IMMEDIATE red flag"
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: ["A"], concerning: [["V"]], critical: { in: ["P", "U"] } }
+    version: "2.0"
+
+  CAP_REFILL:
+    name: "Capillary refill time"
+    definition: "Seconds for capillary bed colour to return after 5 s of pressure, measured centrally."
+    type: vital
+    unit: "s"
+    grain: "patient x observation_window"
+    source_channel: [nurse]
+    acquisition_method: [clinical_observation]
+    max_staleness_minutes: 20
+    materiality_threshold: 1
+    contributes_to: [tabular_risk]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      age_0_1:     { normal: [0, 2], concerning: [[2.1, 3.0]], critical: { gt: 3.0 } }
+      age_1_5:     { normal: [0, 2], concerning: [[2.1, 3.0]], critical: { gt: 3.0 },
+                     note: "In compensated paediatric shock this is often abnormal BEFORE blood pressure falls. High weight in this band." }
+      age_5_12:    { normal: [0, 2], concerning: [[2.1, 3.0]], critical: { gt: 3.0 } }
+      age_12_18:   { normal: [0, 2], concerning: [[2.1, 3.5]], critical: { gt: 3.5 } }
+      age_18_65:   { normal: [0, 2], concerning: [[2.1, 3.5]], critical: { gt: 3.5 } }
+      age_65_80:   { normal: [0, 3], concerning: [[3.1, 4.0]], critical: { gt: 4.0 },
+                     note: "Peripheral vascular disease and cool ambient temperature reduce specificity in this band." }
+      age_80_plus: { normal: [0, 3], concerning: [[3.1, 4.0]], critical: { gt: 4.0 } }
+    version: "2.0"
+
+  # --- Camera-derived observations ------------------------------------------
+
+  ARRIVAL_MODE:
+    name: "Mode of arrival"
+    definition: "How the patient physically entered the department, from a single camera pass at the door."
+    type: observation
+    unit: "categorical"
+    value_set: ["walked_unaided", "walked_assisted", "wheelchair", "carried", "stretcher"]
+    grain: "encounter x arrival_event"
+    source_channel: [camera, nurse]
+    acquisition_method: [gestalt_arrival, clinical_observation]
+    max_staleness_minutes: 999999      # arrival mode does not go stale; it is a fact about the encounter
+    materiality_threshold: 1
+    contributes_to: [tabular_risk]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: ["walked_unaided"], concerning: [["walked_assisted", "wheelchair"]], critical: { in: ["carried", "stretcher"] } }
+    version: "2.0"
+    note: >-
+      This single variable carries much of the 'clinician gestalt' effect. It is
+      captured for free at the door and is currently discarded by every ED that
+      does not have a clinician standing there.
+
+  WORK_OF_BREATHING:
+    name: "Visible work of breathing"
+    definition: "Ordinal score for accessory muscle use, nasal flaring, recession, tripod posture."
+    type: observation
+    unit: "ordinal_0_3"
+    value_set: [0, 1, 2, 3]
+    grain: "patient x window"
+    source_channel: [camera, nurse]
+    acquisition_method: [pose_estimation, clinical_observation]
+    refresh_cadence_seconds: 60
+    max_staleness_minutes: 10
+    materiality_threshold: 1
+    contributes_to: [tabular_risk, red_flag_evaluation]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [0, 0], concerning: [[1, 1]], critical: { gte: 2 } }
+    version: "2.0"
+
+  POSTURE:
+    name: "Posture"
+    definition: "Dominant trunk posture over the observation window."
+    type: observation
+    unit: "categorical"
+    value_set: ["upright", "leaning", "slumped", "tripod", "supine"]
+    grain: "patient x window"
+    source_channel: [camera]
+    acquisition_method: [pose_estimation]
+    refresh_cadence_seconds: 60
+    max_staleness_minutes: 10
+    materiality_threshold: 1
+    contributes_to: [tabular_risk]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: ["upright"], concerning: [["leaning", "slumped"]], critical: { in: ["tripod", "supine"] } }
+    version: "2.0"
+
+  STILLNESS_MINUTES:
+    name: "Continuous stillness"
+    definition: "Minutes since the last detected voluntary position change."
+    type: derived
+    formula: "now - last_position_change_event"
+    unit: "min"
+    grain: "patient x window"
+    source_channel: [camera]
+    acquisition_method: [pose_estimation]
+    refresh_cadence_seconds: 60
+    max_staleness_minutes: 5
+    materiality_threshold: 5
+    materiality_class: MODERATE
+    statistical_power: MODERATE
+    contributes_to: [tabular_risk, trajectory]
+    escalation_thresholds:
+      delta_trigger: ">12 minutes without voluntary movement in a patient previously mobile -> nurse re-check"
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [0, 8], concerning: [[9, 14]], critical: { gt: 14 } }
+    version: "2.0"
+    note: >-
+      ASSOCIATION ONLY. Stillness co-occurs with deterioration and also with
+      sleeping, with pain-avoidance, and with a patient who has simply found a
+      comfortable position. It must never be narrated as a mechanism.
+
+  SKIN_COLOR_CHANGE:
+    name: "Skin colour change from arrival"
+    definition: "Direction of change in facial region chromaticity relative to the arrival baseline for this patient."
+    type: derived
+    formula: "chromaticity(window) - chromaticity(arrival)"
+    unit: "categorical"
+    value_set: ["unchanged", "paler", "mottled", "flushed", "cyanotic_suspected"]
+    grain: "patient x window"
+    source_channel: [camera]
+    acquisition_method: [rppg_hr]
+    refresh_cadence_seconds: 120
+    max_staleness_minutes: 15
+    materiality_threshold: 1
+    contributes_to: [tabular_risk]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: ["unchanged"], concerning: [["paler", "flushed"]], critical: { in: ["mottled", "cyanotic_suspected"] } }
+    version: "2.0"
+    note: >-
+      SELF-RELATIVE ONLY. Compared against this patient's own arrival baseline,
+      never against a population reference. An absolute-colour model would encode
+      skin-tone bias directly. Even self-relative, sensitivity is lower at higher
+      Fitzpatrick types and this is reported as a monitored subgroup metric.
+
+  # --- Attendant-derived observations ---------------------------------------
+
+  CONFUSION_NEW:
+    name: "New confusion reported by attendant"
+    definition: "Family reports the patient is not oriented as they normally are, or cannot state their own name."
+    type: observation
+    unit: "boolean"
+    grain: "patient x prompt_response"
+    source_channel: [attendant]
+    acquisition_method: [proxy_report]
+    refresh_cadence_seconds: 1200
+    max_staleness_minutes: 25
+    materiality_threshold: 1
+    materiality_class: CRITICAL
+    statistical_power: WEAK
+    contributes_to: [materiality_escalation, discordance, red_flag_evaluation]
+    escalation_thresholds:
+      absolute_trigger: "true -> mandatory nurse re-check regardless of every vital sign"
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none            # the attendant reports it; the attendant is never shown its weight
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [false], concerning: [], critical: { eq: true } }
+    version: "2.0"
+    note: >-
+      THE CANONICAL WEAK-EVIDENCE / HIGH-MATERIALITY CASE. A single family report
+      of new confusion has almost no statistical power in any tabular model, and
+      enormous clinical materiality - particularly in age_80_plus, where delirium
+      is often the sole presenting feature of serious infection. SAATHI escalates
+      on materiality here, NOT on model contribution. See core/escalation.py.
+
+  SLEEPINESS_INCREASE:
+    name: "Increased sleepiness reported by attendant"
+    definition: "Family reports the patient is harder to rouse or more drowsy than when they arrived."
+    type: observation
+    unit: "boolean"
+    grain: "patient x prompt_response"
+    source_channel: [attendant]
+    acquisition_method: [proxy_report]
+    refresh_cadence_seconds: 1200
+    max_staleness_minutes: 25
+    materiality_threshold: 1
+    materiality_class: HIGH
+    statistical_power: WEAK
+    contributes_to: [materiality_escalation, discordance, tabular_risk]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [false], concerning: [], critical: { eq: true } }
+    version: "2.0"
+
+  RESPONDS_TO_NAME:
+    name: "Responds to own name"
+    definition: "Family confirms the patient answers when called by name."
+    type: observation
+    unit: "boolean"
+    grain: "patient x prompt_response"
+    source_channel: [attendant]
+    acquisition_method: [proxy_report]
+    refresh_cadence_seconds: 1200
+    max_staleness_minutes: 25
+    materiality_threshold: 1
+    materiality_class: CRITICAL
+    statistical_power: WEAK
+    contributes_to: [materiality_escalation, red_flag_evaluation]
+    escalation_thresholds:
+      absolute_trigger: "false -> RF_UNRESPONSIVE_PROXY red flag"
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [true], concerning: [], critical: { eq: false } }
+    version: "2.0"
+
+  ATTENDANT_CONCERN:
+    name: "Attendant states they are worried"
+    definition: "Unstructured family concern, captured as a single escalation press."
+    type: observation
+    unit: "boolean"
+    grain: "patient x prompt_response"
+    source_channel: [attendant]
+    acquisition_method: [proxy_report]
+    max_staleness_minutes: 30
+    materiality_threshold: 1
+    materiality_class: MODERATE
+    statistical_power: WEAK
+    contributes_to: [nurse_recheck_trigger]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: own_only
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [false], concerning: [[true]], critical: {} }
+    version: "2.0"
+    note: >-
+      NON-GAMEABLE BY CONSTRUCTION. This concept routes to
+      nurse_recheck_trigger ONLY. It has no path into tabular_risk, into EWER
+      rank, or into acuity. Pressing it 50 times buys 50 nurse re-checks capped
+      by the re-check budget, and zero queue positions. Enforced in
+      core/escalation.py::attendant_escalation, tested in
+      tests/test_invariants.py::test_attendant_non_gaming.
+
+  PAIN_SELF_REPORT:
+    name: "Patient-reported pain score"
+    definition: "0-10 numeric rating scale as stated by the patient."
+    type: symptom
+    unit: "ordinal_0_10"
+    grain: "patient x observation_window"
+    source_channel: [nurse]
+    acquisition_method: [self_report]
+    max_staleness_minutes: 30
+    materiality_threshold: 3
+    contributes_to: [tabular_risk, discordance]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [0, 3], concerning: [[4, 6]], critical: { gte: 7 } }
+    version: "2.0"
+    note: >-
+      LOW RELIABILITY WEIGHT BY DESIGN (0.40). A denied pain score in the
+      presence of guarding posture and rising respiratory rate is a DISCORDANCE
+      signal, not a reassurance. See the stoic under-reporter path in
+      core/fusion.py::discordance_terms.
+
+  # --- Derived ---------------------------------------------------------------
+
+  SHOCK_INDEX:
+    name: "Shock index"
+    definition: "Heart rate divided by systolic blood pressure."
+    type: derived
+    formula: "HEART_RATE / SBP"
+    unit: "ratio"
+    grain: "patient x observation_window"
+    source_channel: [nurse]
+    acquisition_method: [deterministic]
+    max_staleness_minutes: 30
+    materiality_threshold: 0.15
+    contributes_to: [tabular_risk]
+    requires: [HEART_RATE, SBP]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      age_0_1:     { normal: [0.0, 1.8], concerning: [[1.81, 2.2]],  critical: { gt: 2.2 } }
+      age_1_5:     { normal: [0.0, 1.4], concerning: [[1.41, 2.0]],  critical: { gt: 2.0 },
+                     note: "Higher than the adult ceiling because normal paediatric HR/SBP is itself a higher ratio. RF_PAEDS_COMPENSATED_SHOCK is the rule that should catch compensated shock in this band, not the shock index." }
+      age_5_12:    { normal: [0.0, 1.2], concerning: [[1.21, 1.5]],  critical: { gt: 1.5 } }
+      age_12_18:   { normal: [0.0, 0.9], concerning: [[0.91, 1.1]],  critical: { gt: 1.1 } }
+      age_18_65:   { normal: [0.0, 0.8], concerning: [[0.81, 1.0]],  critical: { gt: 1.0 } }
+      age_65_80:   { normal: [0.0, 0.8], concerning: [[0.81, 0.95]], critical: { gt: 0.95 },
+                     note: "Lower critical threshold: blunted tachycardia means the index rises later than in a young adult." }
+      age_80_plus: { normal: [0.0, 0.8], concerning: [[0.81, 0.95]], critical: { gt: 0.95 } }
+    version: "2.0"
+    note: "Computed only when BOTH inputs pass their quality and staleness gates. Never computed from an imputed component."
+
+  WAIT_MINUTES:
+    name: "Time waited since arrival"
+    definition: "Minutes between arrival timestamp and now."
+    type: derived
+    formula: "now - arrival_time"
+    unit: "min"
+    grain: "encounter x now"
+    source_channel: [system]
+    acquisition_method: [deterministic]
+    max_staleness_minutes: 1
+    materiality_threshold: 5
+    contributes_to: [sla_evaluation, ewer]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: own_only
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [0, 30], concerning: [[31, 60]], critical: { gt: 60 } }
+    version: "2.0"
+    note: "Actual SLA breach is evaluated per acuity level in cost_policy.yaml, not against these generic bands."
+
+  MINUTES_SINCE_HUMAN_CONTACT:
+    name: "Time since last human clinical contact"
+    definition: "Minutes since a nurse or clinician last physically assessed this patient."
+    type: derived
+    formula: "now - last_human_assessment_time"
+    unit: "min"
+    grain: "encounter x now"
+    source_channel: [system]
+    acquisition_method: [deterministic]
+    max_staleness_minutes: 1
+    materiality_threshold: 10
+    contributes_to: [ewer, sla_evaluation]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [0, 20], concerning: [[21, 45]], critical: { gt: 45 } }
+    version: "2.0"
+
+  # --- Prior record ----------------------------------------------------------
+
+  COMORBIDITY_COUNT:
+    name: "Recorded comorbidity count"
+    definition: "Count of active chronic conditions in the linked health record."
+    type: observation
+    unit: "count"
+    grain: "patient x record_version"
+    source_channel: [prior_record]
+    acquisition_method: [record_lookup]
+    max_staleness_minutes: 525600      # 1 year; beyond this the record is flagged stale, not discarded
+    materiality_threshold: 1
+    contributes_to: [tabular_risk_full_model_only]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [0, 1], concerning: [[2, 3]], critical: { gte: 4 } }
+    version: "2.0"
+    note: "AVAILABLE IN ROUGHLY HALF OF ARRIVALS. Absence routes the patient to OBSERVATION_ONLY_v1. Never imputed."
+
+  PRIOR_ED_VISITS_90D:
+    name: "ED visits in the last 90 days"
+    definition: "Count of prior emergency presentations in the linked record within 90 days."
+    type: observation
+    unit: "count"
+    grain: "patient x record_version"
+    source_channel: [prior_record]
+    acquisition_method: [record_lookup]
+    max_staleness_minutes: 525600
+    materiality_threshold: 1
+    contributes_to: [tabular_risk_full_model_only]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [0, 0], concerning: [[1, 2]], critical: { gte: 3 } }
+    version: "2.0"
+
+  PRIOR_ICU_ADMISSION:
+    name: "Prior ICU admission"
+    definition: "Any recorded intensive care admission in the linked record."
+    type: observation
+    unit: "boolean"
+    grain: "patient x record_version"
+    source_channel: [prior_record]
+    acquisition_method: [record_lookup]
+    max_staleness_minutes: 525600
+    materiality_threshold: 1
+    contributes_to: [tabular_risk_full_model_only]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: none
+      administrator: aggregate_only
+    age_band_thresholds:
+      _all: { normal: [false], concerning: [[true]], critical: {} }
+    version: "2.0"
+
+  # --- Free text (restricted) ------------------------------------------------
+
+  COMPLAINT_TEXT:
+    name: "Spoken chief complaint"
+    definition: "ASR transcription of the patient's own words, code-mix normalised."
+    type: symptom
+    unit: "text"
+    grain: "encounter x arrival"
+    source_channel: [nurse]
+    acquisition_method: [asr]
+    max_staleness_minutes: 999999
+    materiality_threshold: null
+    contributes_to: [symptom_extraction]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: own_only
+      administrator: denied
+    pii_class: DIRECT_QUOTE_MAY_CONTAIN_IDENTIFIERS
+    llm_egress: redact_then_allow
+    age_band_thresholds: {}
+    version: "2.0"
+    note: >-
+      UNTRUSTED INPUT. Treated as data, never as instruction. Passed through
+      core/injection_guard.py before any LLM call. Cannot alter acuity, cannot
+      alter permissions, cannot suppress a red flag.
+
+  ATTENDANT_FREE_TEXT:
+    name: "Attendant free-text note"
+    definition: "Optional free text typed or dictated by the family attendant."
+    type: symptom
+    unit: "text"
+    grain: "patient x prompt_response"
+    source_channel: [attendant]
+    acquisition_method: [proxy_report]
+    max_staleness_minutes: 999999
+    materiality_threshold: null
+    contributes_to: [symptom_extraction]
+    access_restrictions:
+      triage_nurse: full
+      ed_physician: full
+      attendant: own_only
+      administrator: denied
+    pii_class: DIRECT_QUOTE_MAY_CONTAIN_IDENTIFIERS
+    llm_egress: redact_then_allow
+    age_band_thresholds: {}
+    version: "2.0"
+    note: "UNTRUSTED INPUT. Same handling as COMPLAINT_TEXT."
+
+# -----------------------------------------------------------------------------
+# SIGNAL QUALITY METRIC DEFINITIONS
+# -----------------------------------------------------------------------------
+quality_metrics:
+  snr_db:
+    name: "Signal-to-noise ratio"
+    higher_is_better: true
+    bands: { GOOD: 4.5, ACCEPTABLE: 3.6, DEGRADED: 2.8, FAILED: 0.0 }
+    note: >-
+      TWO SEPARATE DECISIONS, DELIBERATELY NOT ALIGNED. The bands above are a
+      DISPLAY judgement - how much should a human trust what they are reading.
+      The per-method quality_floor is an ACCEPT/REJECT judgement - may this value
+      enter the feature set at all. They overlap on purpose: an SNR of 3.2 is
+      displayed as DEGRADED and still clears the 3.0 floor for rPPG heart rate,
+      so the nurse sees a usable number carrying an explicit warning. The same
+      3.2 falls below the 4.0 floor for rPPG respiratory rate and is rejected
+      outright. Collapsing the two into one number would force a false choice
+      between hiding usable data and showing untrustworthy data as clean.
+  occlusion_pct:
+    name: "Proportion of the region of interest occluded"
+    higher_is_better: false
+    bands: { GOOD: 15, ACCEPTABLE: 30, DEGRADED: 50, FAILED: 100 }
+    note: >-
+      Occlusion is strongly correlated with waiting-room crowding, which is
+      exactly when triage matters most. Missingness here is NOT at random and is
+      modelled as informative in core/confidence.py.
+  asr_confidence:
+    name: "ASR utterance confidence"
+    higher_is_better: true
+    bands: { GOOD: 0.80, ACCEPTABLE: 0.55, DEGRADED: 0.35, FAILED: 0.0 }
+  motion_index:
+    name: "Subject motion energy during the rPPG window"
+    higher_is_better: false
+    bands: { GOOD: 0.2, ACCEPTABLE: 0.4, DEGRADED: 0.7, FAILED: 1.0 }
+
+# -----------------------------------------------------------------------------
+# CONFIDENCE COMPONENT DEFINITIONS
+# These are kept separate and are NEVER collapsed into one displayed number.
+# -----------------------------------------------------------------------------
+confidence_components:
+  signal_quality:
+    definition: "Weighted mean of per-channel quality scores for channels that passed their floor."
+    answers: "Could the sensors see what they claim to have seen?"
+  completeness:
+    definition: "Proportion of contract-required features present and fresh, weighted by model importance."
+    answers: "How much of the picture do we actually have?"
+  applicability:
+    definition: "Whether this patient falls inside the model's stated development distribution for their age band and presentation type."
+    answers: "Was this model ever built for a patient like this one?"
+  channel_agreement:
+    definition: "1 minus normalised discordance across nurse, camera and attendant channels."
+    answers: "Do the three independent views of this patient tell the same story?"
+  calibration_status:
+    definition: "Whether a calibration check has been run for this subgroup, and when."
+    answers: "Do our probabilities mean what they say for THIS subgroup?"
+    values: [CALIBRATED, STALE_CALIBRATION, UNCALIBRATED_SUBGROUP, NOT_APPLICABLE_RULES_ONLY]
+
+# -----------------------------------------------------------------------------
+# ABSTENTION POLICY
+# -----------------------------------------------------------------------------
+abstention_policy:
+  version: "1.1"
+  rationale: >-
+    A patient the system cannot see is a patient a human must see. Abstention
+    raises attention; it never lowers it. Every gate below, when tripped, holds
+    the patient at their current acuity, protects their queue position, and
+    zeroes the re-check timer.
+  gates:
+    - id: ABST_SIGNAL_FLOOR
+      condition: "count(channels passing quality floor) < 1 AND nurse vitals stale"
+      description: "No channel is producing usable data and the last human measurement has expired."
+    - id: ABST_COMPLETENESS
+      condition: "completeness < 0.35"
+      description: "Too few of the model's required features are present to run it responsibly."
+    - id: ABST_APPLICABILITY
+      condition: "applicability < 0.40"
+      description: "Patient falls outside the stated development distribution."
+    - id: ABST_ASR_AND_NO_ATTENDANT
+      condition: >-
+        asr_confidence < 0.40 AND attendant_channel_absent AND no_prior_record
+        AND live_objective_channels < 2
+      description: >-
+        Nobody can tell us why this patient is here, AND we cannot see them
+        either. The final clause is load-bearing: a non-verbal patient with no
+        family and no record, but with fresh nurse vitals and a clean camera, is
+        a patient we CAN still assess physiologically. That is a reduced-
+        information state, not a blind one, and it is handled by lowering
+        completeness and shortening the re-check interval rather than by
+        abstaining. Conflating 'no history' with 'no observation' would abstain
+        on a large share of Indian ED arrivals and destroy the system's
+        usefulness. Compare P-016 (assessable) with P-009 (not).
+    - id: ABST_CAMERA_OCCLUSION_SUSTAINED
+      condition: "occlusion_pct > 55 for >= 4 consecutive windows AND no fresh nurse vitals"
+      description: "Camera is blind and no other channel is compensating."
+  on_abstain:
+    hold_acuity: true
+    downgrade_permitted: false
+    protect_queue_position: true
+    recheck_timer_minutes: 0
+    emit_priority_question: true
+    llm_narration: "restricted_to_insufficient_signal_grammar"

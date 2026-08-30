@@ -1,0 +1,10 @@
+# Regenerated at runtime on every boot - 19MB, and it is an audit store, not source.
+artifacts/saathi_audit.db
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+.DS_Store

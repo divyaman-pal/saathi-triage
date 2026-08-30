@@ -1,0 +1,223 @@
+# =============================================================================
+# SAATHI DECISION COST POLICY
+# -----------------------------------------------------------------------------
+# The operating point of every classifier in SAATHI is derived from THIS FILE.
+# It is not derived from Youden's J, not from F1, and not from accuracy.
+#
+# Consumed by core/cost_engine.py. Versioned, auditable, and owned by a named
+# clinical governance role - not a magic number in Python.
+# =============================================================================
+
+policy_version: "1.4"
+effective_from: "2026-01-01"
+owner: "Clinical Director, Emergency Medicine (accountable signatory)"
+review_cadence_days: 90
+
+# -----------------------------------------------------------------------------
+# THE ASYMMETRY
+# -----------------------------------------------------------------------------
+asymmetric_cost:
+  cost_under_triage: 12.0
+  cost_over_triage: 1.0
+  ratio: 12.0
+
+  justification: >-
+    An under-triage is a patient who deteriorates unattended in a waiting room.
+    Its cost is measured in avoidable mortality, avoidable ICU days, and
+    irreversible harm. An over-triage is a patient who occupies a bay or a nurse
+    walk they did not need. Its cost is measured in minutes of staff time and
+    transient bed occupancy - real, bounded, and recoverable.
+
+    These two errors are not commensurable on a single accuracy metric, and any
+    model tuned to maximise accuracy is silently choosing a ratio of 1.0. We
+    choose 12.0 explicitly so that the choice is visible, arguable, and
+    changeable by a clinician rather than implicit in a library default.
+
+  derivation_of_12: >-
+    Anchored on published emergency-medicine consensus that clinically
+    acceptable under-triage rates for time-critical presentations sit in the
+    low single-digit percent while over-triage rates of 30-50% are routinely
+    tolerated in trauma systems. A tolerated over-triage rate roughly an order
+    of magnitude above the tolerated under-triage rate implies a cost ratio of
+    the same order. 12 sits inside that band. It is a POLICY PARAMETER, not an
+    empirical measurement, and it is stated as such.
+
+  sensitivity_analysis_required: true
+  sensitivity_range: [6.0, 24.0]
+  note: >-
+    Every reported performance figure must be accompanied by the same figure at
+    ratio 6 and ratio 24. If a conclusion only holds at exactly 12, the
+    conclusion is an artefact of the parameter and must be reported as such.
+
+  # Threshold derivation. Expected-cost minimisation:
+  #   escalate iff  p * C_under  >  (1 - p) * C_over
+  #   =>            p  >  C_over / (C_under + C_over)
+  #   =>            p  >  1 / (1 + 12)  =  0.0769
+  derived_threshold_formula: "p_escalate > C_over / (C_under + C_over)"
+  derived_threshold_at_current_ratio: 0.0769
+  symmetric_comparison_threshold: 0.5
+  comparison_mandatory_in_reporting: true
+
+# -----------------------------------------------------------------------------
+# ACUITY SCHEME IN USE
+# -----------------------------------------------------------------------------
+acuity:
+  scheme_id: "ESI"
+  scheme_version: "v4"
+  levels: [1, 2, 3, 4, 5]
+  semantics: "LOWER NUMBER = HIGHER URGENCY. Level 1 is resuscitation."
+  monotonic_direction: "decreasing"
+  note: >-
+    Every acuity value emitted by SAATHI carries scheme_id and scheme_version.
+    An ESI 2 is NOT an MTS Orange and is NOT a CTAS 2. See acuity_schemes.yaml
+    for the declared-lossy cross-scheme mapping.
+
+# Per-level escalation probability thresholds, all derived from the cost ratio
+# above rather than tuned for accuracy. Higher acuity => lower threshold =>
+# easier to escalate into.
+level_thresholds:
+  to_level_1: 0.42        # resuscitation. Rare, high-consequence, still cost-weighted.
+  to_level_2: 0.077       # = derived_threshold_at_current_ratio
+  to_level_3: 0.030
+  to_level_4: 0.012
+  note: >-
+    Read as: 'escalate this patient to level N if the calibrated probability of
+    the level-N outcome exceeds the stated value'. The level-2 threshold is the
+    headline one and is exactly the cost-derived value.
+
+# -----------------------------------------------------------------------------
+# WAIT-TIME SLA PER ACUITY LEVEL
+# Breach forces a re-assessment (TR_SLA_BREACH). It does not itself raise acuity.
+# -----------------------------------------------------------------------------
+sla:
+  level_1: { max_wait_minutes: 0,   recheck_interval_minutes: 0 }
+  level_2: { max_wait_minutes: 10,  recheck_interval_minutes: 10 }
+  level_3: { max_wait_minutes: 30,  recheck_interval_minutes: 30 }
+  level_4: { max_wait_minutes: 60,  recheck_interval_minutes: 60 }
+  level_5: { max_wait_minutes: 120, recheck_interval_minutes: 120 }
+
+# Multiplicative modifiers applied to recheck_interval_minutes.
+# Shorter interval = more human attention. Every modifier below is <= 1.0:
+# there is no configuration in which reduced information buys LESS attention.
+recheck_modifiers:
+  no_prior_record:        0.50
+  abstention_active:      0.00      # immediate
+  consent_declined:       0.50
+  low_confidence:         0.60      # any confidence component below its floor
+  surge_active:           0.50
+  channel_degraded:       0.70
+  attendant_absent:       0.80
+  clamp_minimum_minutes:  5
+
+# -----------------------------------------------------------------------------
+# ESCALATION ALERT BUDGET
+# Alarm fatigue is a safety failure with a slower onset than under-triage and a
+# similar end state. If SAATHI emits more alerts than the floor can absorb, it
+# will be ignored inside a week and the under-triage rate returns to baseline.
+# -----------------------------------------------------------------------------
+alert_budget:
+  normal:
+    alerts_per_hour: 8
+    presentation: per_patient
+  surge:
+    alerts_per_hour: 12
+    presentation: batched_top_n
+    batch_size: 5
+  enforcement: >-
+    When the budget is exhausted, alerts are RE-RANKED by EWER and the lowest
+    are deferred to the batched queue view. They are NEVER discarded, and a
+    deferred alert is still visible on the physician queue view with a
+    'deferred by budget' marker. Red flags and abstentions are EXEMPT from the
+    budget and always surface immediately.
+  exempt_from_budget: [RED_FLAG_FIRED, INSUFFICIENT_SIGNAL, SLA_BREACH_LEVEL_1_2]
+
+# -----------------------------------------------------------------------------
+# SURGE POSTURE
+# The system must behave DIFFERENTLY under load, not merely slower.
+# -----------------------------------------------------------------------------
+surge:
+  detection:
+    metric: "arrivals_per_hour / baseline_arrivals_per_hour"
+    trigger_ratio: 2.0
+    sustained_windows: 2
+    announce_on_screen: true
+  posture_changes:
+    recheck_interval_multiplier: 0.5
+    alert_budget_per_hour: 12
+    alert_presentation: batched_top_n
+    attendant_prompt_interval_minutes: 12      # from 20
+    llm_narration: "disabled_below_level_2"
+    expected_camera_occlusion_increase_pct: 25
+    expected_abstention_rate_change: "RISES - and that is the correct behaviour"
+  invariant: >-
+    Under surge the system must NOT become more confident to cope with volume.
+    Degraded signal quality under crowding must produce MORE abstentions and
+    MORE nurse re-checks, not fewer. Tested by
+    tests/test_adversarial.py::test_surge_does_not_inflate_confidence.
+  honest_failure_point:
+    absorbable_escalations_per_hour_per_nurse: 4
+    statement: >-
+      With 3 triage-capable nurses, the floor can absorb roughly 12 escalations
+      per hour. Above approximately 4x baseline arrival volume, SAATHI will
+      generate more escalations than the floor can act on. At that point the
+      system switches to QUEUE_TRIAGE_MODE, stops emitting individual alerts,
+      and presents a single ranked list with an explicit banner stating that
+      the department is beyond the assisted-triage operating envelope. It does
+      not pretend to scale past this. This number is a function of staffing and
+      is configured per deployment.
+  queue_triage_mode:
+    trigger_ratio: 4.0
+    behaviour: "ranked list only, no individual alerts, explicit degraded banner, red flags still immediate"
+
+# -----------------------------------------------------------------------------
+# CONFIDENCE FLOORS
+# Below these, the low_confidence recheck modifier applies and the narrative
+# grammar is restricted.
+# -----------------------------------------------------------------------------
+confidence_floors:
+  signal_quality:    0.45
+  completeness:      0.40
+  applicability:     0.50
+  channel_agreement: 0.30      # deliberately low: disagreement is INFORMATION, not failure
+  note: >-
+    channel_agreement has the lowest floor on purpose. Three channels
+    disagreeing is a finding, and SAATHI's central fusion claim is that
+    discordance carries signal. A low agreement score reduces certainty in the
+    NUMBER while often increasing the case for a human to look.
+
+# -----------------------------------------------------------------------------
+# MATERIALITY POLICY
+# Statistical evidence and clinical materiality are separate axes.
+# -----------------------------------------------------------------------------
+materiality:
+  matrix:
+    - { statistical: WEAK,   materiality: CRITICAL, action: ESCALATE,        example: "single family report of new confusion in an 84-year-old" }
+    - { statistical: STRONG, materiality: HIGH,     action: ESCALATE,        example: "respiratory rate up 7 over 22 minutes, corroborated across windows" }
+    - { statistical: MODERATE, materiality: CRITICAL, action: ESCALATE,      example: "family proxy report of unresponsiveness from a calibrated reporter" }
+    - { statistical: MODERATE, materiality: HIGH,     action: RECHECK,       example: "family-counted respiratory rate of 26 in an adult" }
+    - { statistical: STRONG, materiality: MODERATE, action: RECHECK,         example: "heart rate up 14 over 20 minutes with no other movement" }
+    - { statistical: MODERATE, materiality: MODERATE, action: RECHECK,       example: "12 minutes of unbroken stillness in a previously mobile patient" }
+    - { statistical: WEAK,   materiality: MODERATE, action: LOG_ONLY,        example: "one borderline reading from a single degraded channel" }
+    - { statistical: WEAK,   materiality: HIGH,     action: RECHECK,         example: "family reports increased sleepiness" }
+    - { statistical: WEAK,   materiality: LOW,      action: LOG_ONLY,        example: "attendant reports patient shifted in the chair" }
+    - { statistical: STRONG, materiality: CRITICAL, action: ESCALATE,        example: "sustained rise in respiratory rate with corroborating stillness" }
+    - { statistical: STRONG, materiality: LOW,      action: LOG_DO_NOT_ALERT, example: "2 bpm heart-rate drift detected across 40 windows" }
+  accumulation_rule:
+    trigger: "3 or more concurrent RECHECK-class findings, all pointing the same way"
+    action: ESCALATE
+    rationale: >-
+      No single one of them is enough. Three at once, in the same direction, is
+      a different object. A family reporting increased sleepiness, fourteen
+      unbroken minutes of stillness, and a heart rate trending up are each
+      individually a reason to walk over and look; together they are a reason to
+      move the patient up the queue. This is the rule that catches P-014, whose
+      camera lost the respiratory-rate trend to a signal-quality drop at the
+      exact moment it mattered - which is precisely when crowding degrades a
+      camera in a real waiting room.
+    ceiling: "May raise by one level only, and never into level 1."
+
+  principle: >-
+    A p-value is not a clinical priority. The escalation engine may escalate on
+    materiality ALONE, with no statistically significant model movement, and it
+    may decline to alert on a statistically robust but clinically trivial
+    finding. Both directions are implemented in core/escalation.py.

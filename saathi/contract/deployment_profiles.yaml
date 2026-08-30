@@ -1,0 +1,125 @@
+# =============================================================================
+# SAATHI DEPLOYMENT PROFILES
+# -----------------------------------------------------------------------------
+# Hospital heterogeneity is handled as DATA, not as a code fork. The same
+# pipeline, the same contract, the same red-flag ruleset and the same safety
+# invariants run in every tier. A profile selects which CHANNELS EXIST and how
+# CONFIDENCE IS COMPUTED when they do not.
+#
+# Loaded by core/contract_loader.py; selected at runtime by the --tier flag or
+# the SAATHI_TIER environment variable.
+# =============================================================================
+
+profiles_version: "1.1"
+
+guaranteed_in_every_tier:
+  - deterministic_red_flag_layer
+  - monotonic_escalation_invariant
+  - wait_time_sla_and_forced_recheck
+  - abstention_path
+  - override_capture_with_full_payload
+  - audit_trail_and_lineage
+  - backend_enforced_rbac
+  - claim_validator
+  - asymmetric_cost_decisioning
+statement: >-
+  The list above is the floor. A Tier C rural ED with one shared phone and no
+  camera still gets every item on it. What changes between tiers is how much
+  EVIDENCE is available, and therefore how confident SAATHI is permitted to be -
+  never whether the safety machinery is present.
+
+profiles:
+
+  TIER_A:
+    label: "Tier A - Large urban centre"
+    representative_volume_per_day: 500
+    channels:
+      nurse:      { enabled: true,  vitals_devices: [nibp_cuff, pulse_oximeter, thermometer], asr: true }
+      camera:     { enabled: true,  arrival_gestalt: true, waiting_rppg: true, cameras: 3, edge_compute: "mini_pc" }
+      attendant:  { enabled: true,  transport: [smartphone_app, sms, ivr], languages: 8 }
+      prior_record: { enabled: true, source: "HMIS + ABDM/ABHA consent-manager fetch", typical_hit_rate: 0.55 }
+    connectivity: { internet: reliable, mode: edge_primary_cloud_optional }
+    models_enabled: [rules, tabular_full, tabular_observation_only, temporal_fusion, rppg, pose, asr, llm_narration]
+    llm: { enabled: true, kill_switch: true }
+    baseline_arrivals_per_hour: 21
+    triage_capable_nurses: 3
+    expected_confidence_ceiling: 0.90
+    degradation_notes: "Full stack. Confidence is limited by signal quality, not by channel availability."
+
+  TIER_B:
+    label: "Tier B - Mid-size district hospital"
+    representative_volume_per_day: 250
+    channels:
+      nurse:      { enabled: true,  vitals_devices: [nibp_cuff, pulse_oximeter, thermometer], asr: true }
+      camera:     { enabled: true,  arrival_gestalt: true, waiting_rppg: false, cameras: 1, edge_compute: "shared_tablet" }
+      attendant:  { enabled: true,  transport: [sms, ivr], languages: 4 }
+      prior_record: { enabled: true, source: "partial HMIS", typical_hit_rate: 0.25 }
+    connectivity: { internet: intermittent, mode: offline_first_sync_on_reconnect }
+    models_enabled: [rules, tabular_full, tabular_observation_only, temporal_fusion, pose, asr, llm_narration]
+    llm: { enabled: true, kill_switch: true, note: "Narration queued and rendered on reconnect; never blocks the decision." }
+    baseline_arrivals_per_hour: 11
+    triage_capable_nurses: 2
+    expected_confidence_ceiling: 0.72
+    degradation_notes: >-
+      No waiting-area rPPG. The continuous-vitals channel is ABSENT, not
+      degraded - so completeness is structurally capped and the attendant
+      channel becomes the primary source of change-over-time. Re-check intervals
+      are correspondingly shorter than Tier A for the same acuity.
+
+  TIER_C:
+    label: "Tier C - Small rural / district ED"
+    representative_volume_per_day: 100
+    channels:
+      nurse:      { enabled: true,  vitals_devices: [pulse_oximeter, thermometer], asr: false,
+                    note: "No NIBP cuff assumed. SBP and SHOCK_INDEX are therefore structurally MISSING, never imputed." }
+      camera:     { enabled: false, arrival_gestalt: false, waiting_rppg: false, cameras: 0,
+                    note: "Arrival mode is captured by the nurse as a one-tap observation instead - the gestalt signal survives, the sensor does not." }
+      attendant:  { enabled: true,  transport: [sms, ivr], languages: 4,
+                    note: "Feature-phone first. IVR reads the prompt aloud; the reply is a keypad digit." }
+      prior_record: { enabled: false, source: null, typical_hit_rate: 0.0 }
+    connectivity: { internet: intermittent_or_absent, mode: offline_first_sync_on_reconnect }
+    models_enabled: [rules, tabular_observation_only]
+    llm: { enabled: false, kill_switch: true,
+           note: "LLM OFF by default at this tier. Narration falls back to the deterministic template renderer. The triage decision is byte-identical either way - which is the whole point of the LLM boundary." }
+    baseline_arrivals_per_hour: 4
+    triage_capable_nurses: 1
+    expected_confidence_ceiling: 0.55
+    degradation_notes: >-
+      Rules plus an observation-only tabular model on a reduced feature set.
+      No camera, no continuous vitals, no prior record, no temporal fusion over
+      camera windows. Confidence is capped at 0.55 and every score carries the
+      REDUCED_CHANNEL_SET disclosure. The attendant channel over IVR is the ONLY
+      source of change during the wait, so its prompt cadence is the shortest of
+      any tier.
+    honest_statement: >-
+      At this tier SAATHI is closer to a disciplined, age-aware, clock-driven
+      re-check system with a family reporting channel than to a multi-modal AI.
+      That is still a material improvement on 'triage once and hope', and it is
+      what the majority of Indian district EDs can actually deploy tomorrow. We
+      state this plainly rather than implying the full stack runs everywhere.
+
+# -----------------------------------------------------------------------------
+# CHANNEL-ABSENT VS CHANNEL-DEGRADED
+# A distinction the confidence engine must honour.
+# -----------------------------------------------------------------------------
+channel_availability_semantics:
+  ABSENT:
+    definition: "The channel does not exist in this deployment profile."
+    completeness_effect: "Denominator is reduced - the patient is not penalised for a sensor the hospital never bought."
+    confidence_effect: "Caps expected_confidence_ceiling for the tier."
+    recheck_effect: "Shorter interval, permanently, for the whole site."
+  DEGRADED:
+    definition: "The channel exists and is producing data below its quality floor."
+    completeness_effect: "Counted as missing in the numerator - the feature was expected and did not arrive."
+    confidence_effect: "Reduces signal_quality for this patient, this window."
+    recheck_effect: "channel_degraded modifier applied to this patient."
+  SILENT:
+    definition: "The channel exists, is nominally healthy, and has produced nothing for N minutes."
+    completeness_effect: "Counted as missing."
+    confidence_effect: "Reduces signal_quality AND completeness."
+    recheck_effect: "TR_ALL_CHANNELS_SILENT may fire."
+  note: >-
+    Collapsing these three into a single 'no data' state is the most common way
+    a multi-source clinical system quietly lies to its users. A rural hospital
+    with no camera and an urban hospital whose camera is blocked by a crowd are
+    in completely different epistemic positions and must be told so differently.

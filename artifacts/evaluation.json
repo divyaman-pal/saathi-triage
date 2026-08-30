@@ -1,0 +1,195 @@
+{
+  "arrival_rules": {
+    "n": 1600,
+    "exact": 729,
+    "under": 121,
+    "over": 750,
+    "severe_under": 99
+  },
+  "model": {
+    "threshold": 0.07692307692307693,
+    "under_triage_n": 42.0,
+    "over_triage_n": 230.0,
+    "under_triage_rate": 0.6086956521739131,
+    "over_triage_rate": 0.15022860875244937,
+    "sensitivity": 0.391304347826087,
+    "specificity": 0.8497713912475506,
+    "total_cost": 734.0,
+    "cost_per_100_patients": 45.875
+  },
+  "calibration": {
+    "paediatric": {
+      "n": 385,
+      "bias": 0.0027,
+      "mean_pred": 0.039,
+      "observed": 0.0364
+    },
+    "adult": {
+      "n": 884,
+      "bias": -0.0087,
+      "mean_pred": 0.0399,
+      "observed": 0.0486
+    },
+    "geriatric": {
+      "n": 331,
+      "bias": 0.0141,
+      "mean_pred": 0.0504,
+      "observed": 0.0363
+    }
+  },
+  "threshold_comparison": {
+    "symmetric": {
+      "threshold": 0.5,
+      "under_triage_n": 69.0,
+      "over_triage_n": 1.0,
+      "under_triage_rate": 1.0,
+      "over_triage_rate": 0.0006531678641410843,
+      "sensitivity": 0.0,
+      "specificity": 0.999346832135859,
+      "total_cost": 829.0,
+      "cost_per_100_patients": 51.81249999999999
+    },
+    "asymmetric": {
+      "threshold": 0.07692307692307693,
+      "under_triage_n": 42.0,
+      "over_triage_n": 230.0,
+      "under_triage_rate": 0.6086956521739131,
+      "over_triage_rate": 0.15022860875244937,
+      "sensitivity": 0.391304347826087,
+      "specificity": 0.8497713912475506,
+      "total_cost": 734.0,
+      "cost_per_100_patients": 45.875
+    },
+    "n_missed_by_symmetric": 24
+  },
+  "baselines": {
+    "model": {
+      "threshold": 0.07692307692307693,
+      "under_triage_n": 42.0,
+      "over_triage_n": 230.0,
+      "under_triage_rate": 0.6086956521739131,
+      "over_triage_rate": 0.15022860875244937,
+      "sensitivity": 0.391304347826087,
+      "specificity": 0.8497713912475506,
+      "total_cost": 734.0,
+      "cost_per_100_patients": 45.875
+    },
+    "rules_only_matched_rate": {
+      "threshold": 0.45799999999999996,
+      "under_triage_n": 53.0,
+      "over_triage_n": 242.0,
+      "under_triage_rate": 0.7681159420289855,
+      "over_triage_rate": 0.1580666231221424,
+      "sensitivity": 0.2318840579710145,
+      "specificity": 0.8419333768778576,
+      "total_cost": 878.0,
+      "cost_per_100_patients": 54.87499999999999
+    },
+    "nurse_alone_sensitivity": 0.4928
+  },
+  "system_level": {
+    "n": 260,
+    "deteriorated": 9,
+    "raised": 4,
+    "acted": 9,
+    "false_raise": 47,
+    "paths": {
+      "ARRIVAL": 3,
+      "TRAJECTORY_MATERIAL_WORSENING": 1
+    }
+  },
+  "subgroups": {
+    "age band": {
+      "age_12_18": [
+        0.75,
+        0.4093,
+        0.9285
+      ],
+      "age_18_65": [
+        0.2558,
+        0.1493,
+        0.4024
+      ],
+      "age_65_80": [
+        0.25,
+        0.0715,
+        0.5907
+      ]
+    },
+    "sex": {
+      "F": [
+        0.2821,
+        0.1654,
+        0.4378
+      ],
+      "M": [
+        0.5333,
+        0.3614,
+        0.6977
+      ]
+    },
+    "Fitzpatrick skin-tone band": {
+      "I-II": [
+        0.25,
+        0.0715,
+        0.5907
+      ],
+      "III-IV": [
+        0.3913,
+        0.2639,
+        0.5354
+      ],
+      "V-VI": [
+        0.4667,
+        0.2481,
+        0.6988
+      ]
+    },
+    "attendant present": {
+      "ABSENT": [
+        0.4211,
+        0.2314,
+        0.6372
+      ],
+      "present": [
+        0.38,
+        0.2586,
+        0.5185
+      ]
+    },
+    "prior record": {
+      "linked": [
+        0.2759,
+        0.147,
+        0.4572
+      ],
+      "none": [
+        0.475,
+        0.3294,
+        0.625
+      ]
+    },
+    "language": {
+      "Awadhi": [
+        0.3333,
+        0.1206,
+        0.6458
+      ],
+      "Hindi": [
+        0.3571,
+        0.1634,
+        0.6124
+      ],
+      "Tamil": [
+        0.6,
+        0.3127,
+        0.8318
+      ],
+      "Telugu": [
+        0.3636,
+        0.1517,
+        0.6462
+      ]
+    }
+  }
+}

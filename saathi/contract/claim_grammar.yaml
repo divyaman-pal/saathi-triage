@@ -1,0 +1,331 @@
+# =============================================================================
+# SAATHI CLINICAL CLAIM GRAMMAR
+# -----------------------------------------------------------------------------
+# The Claim Compiler decides WHAT MAY BE SAID from WHAT THE EVIDENCE SUPPORTS,
+# before any language is generated. The LLM renders an already-decided Safety
+# Contract into prose. The Validator then re-checks the prose against this
+# grammar and REJECTS anything outside it.
+#
+# Consumed by core/claim_compiler.py and core/validator.py.
+# =============================================================================
+
+grammar_version: "1.2"
+effective_from: "2026-01-01"
+
+# -----------------------------------------------------------------------------
+# EPISTEMIC STATES
+# The compiler assigns exactly one. It determines the permitted claim types.
+# -----------------------------------------------------------------------------
+epistemic_states:
+
+  RED_FLAG_FIRED:
+    description: "A deterministic clinician-authored rule has fired."
+    allowed_claim_types: [red_flag_imperative, observation, recommendation_recheck]
+    forbidden_claim_types: [diagnosis, causation, prognosis, treatment, reassurance, probability_statement]
+    tone: imperative
+    example_allowed: "Stridor reported. Immediate clinician review."
+    example_forbidden: "Stridor suggests upper airway obstruction, likely croup."
+    max_words: 40
+
+  HIGH_CONFIDENCE_ESCALATION:
+    description: "All confidence components above floor, channels agree, model above cost threshold."
+    allowed_claim_types: [observation, attribution, association, recommendation_recheck]
+    forbidden_claim_types: [diagnosis, causation, prognosis, treatment, reassurance]
+    tone: declarative
+    example_allowed: "Respiratory rate increased from 20 to 27 over 22 minutes. Respiratory rate contributed most to the score change."
+    example_forbidden: "The patient is deteriorating and needs oxygen."
+    max_words: 90
+
+  MODERATE_CONFIDENCE_ESCALATION:
+    description: "Above cost threshold, but one or more confidence components below floor."
+    allowed_claim_types: [observation, attribution, association, recommendation_recheck, uncertainty_disclosure]
+    forbidden_claim_types: [diagnosis, causation, prognosis, treatment, reassurance]
+    tone: declarative_hedged
+    required_disclosure: true
+    example_allowed: "Respiratory rate increased from 20 to 27 over 22 minutes (camera, DEGRADED quality). No prior record available. Recommend nurse re-check."
+    max_words: 100
+
+  DISCORDANT_CHANNELS:
+    description: "Channels materially disagree. The disagreement is the finding."
+    allowed_claim_types: [observation, discordance_statement, recommendation_recheck, uncertainty_disclosure]
+    forbidden_claim_types: [diagnosis, causation, prognosis, treatment, reassurance, attribution]
+    tone: declarative_contrastive
+    required_disclosure: true
+    attribution_forbidden_reason: >-
+      When channels disagree, a single SHAP-style attribution presents one
+      channel's story as the explanation and hides the conflict. The compiler
+      forbids attribution in this state and requires an explicit contrast
+      instead.
+    example_allowed: "Vital signs are within age-band limits. The attendant reports the patient no longer answers to his name. These do not agree. Nurse re-check required."
+    max_words: 90
+
+  MATERIALITY_ESCALATION:
+    description: "Escalated on clinical materiality with weak statistical support."
+    allowed_claim_types: [observation, materiality_statement, recommendation_recheck, uncertainty_disclosure]
+    forbidden_claim_types: [diagnosis, causation, prognosis, treatment, reassurance, attribution, probability_statement]
+    tone: declarative
+    required_disclosure: true
+    example_allowed: "New confusion reported by family. The vital-sign model did not move. Escalated on clinical significance, not on model output. Nurse re-check required."
+    max_words: 80
+
+  OBSERVATION_ONLY:
+    description: "No prior record. Reduced feature set model. Descriptive claims only."
+    allowed_claim_types: [observation, recommendation_recheck, uncertainty_disclosure, missing_data_statement]
+    forbidden_claim_types: [diagnosis, causation, prognosis, treatment, reassurance, attribution, association]
+    tone: descriptive
+    required_disclosure: true
+    example_allowed: "First presentation, no prior record. Observation-only model used. Re-check interval shortened to 15 minutes."
+    max_words: 90
+
+  INSUFFICIENT_SIGNAL:
+    description: "The system has abstained. It cannot assess this patient."
+    allowed_claim_types: [insufficient_signal_statement, missing_data_statement, recommendation_recheck, priority_question]
+    forbidden_claim_types: [diagnosis, causation, prognosis, treatment, reassurance, attribution, association,
+                            observation_of_risk, probability_statement, risk_statement, numeric_score]
+    tone: imperative
+    required_disclosure: true
+    numbers_permitted: "Only the failing quality metrics and the staleness ages. NO risk number, NO score, NO probability."
+    example_allowed: "Cannot produce a reliable estimate. Camera occluded 60% of the window, ASR confidence 0.34, nurse vitals 41 minutes old, no attendant present. Mandatory nurse re-check."
+    example_forbidden: "Probably low risk, but the signal is poor."
+    max_words: 90
+
+  STABLE_NO_CHANGE:
+    description: "Nothing has changed. Reported without any reassurance."
+    allowed_claim_types: [observation, recommendation_recheck]
+    forbidden_claim_types: [diagnosis, causation, prognosis, treatment, reassurance, safe_to_wait]
+    tone: neutral
+    example_allowed: "No change in any channel since 11:04. Next scheduled re-check 11:34."
+    example_forbidden: "Patient is stable and can safely wait."
+    reassurance_note: >-
+      'No change observed' is a statement about the SENSORS. 'Stable' and 'safe
+      to wait' are statements about the PATIENT that SAATHI has no standing to
+      make. The distinction is enforced lexically below.
+    max_words: 50
+
+  HUMAN_OVERRIDE_APPLIED:
+    description: "A clinician has overridden the system decision."
+    allowed_claim_types: [observation, override_record_statement]
+    forbidden_claim_types: [diagnosis, causation, prognosis, treatment, reassurance, disagreement_editorial]
+    tone: neutral
+    example_allowed: "Acuity set to 3 by Dr Rao at 11:36. Reason: clinical assessment on examination. System recommendation was 2 and is retained in the record."
+    example_forbidden: "The clinician's downgrade may be unsafe."
+    max_words: 60
+
+# -----------------------------------------------------------------------------
+# LEXICAL BANS - enforced by the validator on the rendered text
+# -----------------------------------------------------------------------------
+universally_forbidden:
+
+  diagnostic_nouns:
+    rationale: >-
+      SAATHI predicts risk of deterioration and need for escalation. It does not
+      diagnose. A diagnostic noun in the output is a category error and, in a
+      clinical-decision-support positioning, a regulatory one.
+    exception: >-
+      A diagnostic noun quoted verbatim from the patient's own complaint is
+      permitted ONLY inside an explicit quotation frame - patient states "...".
+      The validator checks for the quotation frame.
+    terms:
+      - sepsis
+      - septic
+      - pneumonia
+      - myocardial infarction
+      - heart attack
+      - stroke
+      - meningitis
+      - appendicitis
+      - asthma attack
+      - copd exacerbation
+      - dengue
+      - malaria
+      - tuberculosis
+      - covid
+      - croup
+      - bronchiolitis
+      - dka
+      - diabetic ketoacidosis
+      - pulmonary embolism
+      - gastroenteritis
+      - anaphylaxis
+      - respiratory failure
+      - pneumothorax
+      - cardiac arrest
+
+  causal_verbs:
+    rationale: >-
+      A feature attribution is not a mechanism. SHAP tells you how much a
+      feature moved a model output. It tells you nothing about physiology.
+      "Stillness contributed +0.18 to the score" is true. "Stillness caused the
+      deterioration" is a fabrication with a number attached.
+    terms:
+      - caused
+      - causes
+      - causing
+      - led to
+      - resulted in
+      - resulting from
+      - due to
+      - because of
+      - triggered by
+      - responsible for
+
+  certainty_verbs:
+    rationale: >-
+      These verbs assert a level of epistemic access SAATHI does not have. It
+      observes and it ranks; it does not confirm and it does not exclude.
+    terms:
+      - indicates
+      - confirms
+      - rules out
+      - proves
+      - demonstrates that
+      - means that
+      - is consistent with
+
+  prognostic_phrases:
+    rationale: >-
+      SAATHI estimates present risk of near-term escalation. It does not
+      forecast an individual patient trajectory and must not speak as if it does.
+    terms:
+      - will deteriorate
+      - will be fine
+      - is going to
+      - expect them to
+      - unlikely to worsen
+      - low risk of
+
+  reassurance_phrases:
+    rationale: >-
+      THE MOST DANGEROUS OUTPUT CLASS IN THE SYSTEM. A reassuring sentence is
+      the one that stops a human from looking. SAATHI is permitted to say that
+      it has observed no change; it is never permitted to say that a patient is
+      safe. Banned in EVERY epistemic state including STABLE_NO_CHANGE.
+    terms:
+      - safe to wait
+      - can wait
+      - nothing to worry about
+      - looks minor
+      - is stable
+      - remains stable
+      - appears well
+      - no cause for concern
+      - reassuring
+      - probably fine
+      - not serious
+      - no need for concern
+
+  treatment_verbs:
+    rationale: >-
+      Treatment is a prescribing decision. SAATHI has no standing to make one,
+      and a clinical-decision-support positioning depends on it never doing so.
+    terms:
+      - administer
+      - give oxygen
+      - start fluids
+      - prescribe
+      - treat with
+      - needs antibiotics
+      - nebulise
+      - intubate
+
+  risk_words_for_abstention:
+    rationale: >-
+      Applied ONLY in the INSUFFICIENT_SIGNAL state, where any directional risk
+      language would convert an admission of blindness into an assessment.
+    terms:
+      - low risk
+      - high risk
+      - likely
+      - unlikely
+      - probably
+      - appears
+      - seems
+      - suggests
+      - mild
+      - severe
+
+# -----------------------------------------------------------------------------
+# VALIDATOR CHECKS - each is an executable check in core/validator.py
+# -----------------------------------------------------------------------------
+validator_checks:
+
+  - id: VC_CLAIM_TYPE
+    description: "Every sentence must classify to a claim type permitted in the current epistemic state."
+    on_violation: reject_and_regenerate
+
+  - id: VC_FORBIDDEN_LEXICON
+    description: "No banned diagnostic noun, causal verb, certainty verb, prognostic phrase, reassurance phrase or treatment verb."
+    on_violation: reject_and_regenerate
+
+  - id: VC_NUMBER_WHITELIST
+    description: >-
+      Every numeric token in the rendered text must appear in the Safety
+      Contract's allowed_numbers list. This is the anti-hallucination check: an
+      LLM that invents 'respiratory rate 32' when the contract says 27 is caught
+      deterministically, without needing a second model to judge it.
+    on_violation: reject_and_regenerate
+
+  - id: VC_ENTITY_WHITELIST
+    description: "Every clinical entity mentioned must appear in the contract's allowed_entities."
+    on_violation: reject_and_regenerate
+
+  - id: VC_PII_EGRESS
+    description: "No name, phone number, ABHA number or address may appear in the output."
+    on_violation: reject_hard          # never regenerate; fall straight to the deterministic template
+    severity: CRITICAL
+
+  - id: VC_ABSTENTION_PURITY
+    description: "In INSUFFICIENT_SIGNAL state, no risk number, score, probability or risk-directional word may appear."
+    on_violation: reject_hard
+    severity: CRITICAL
+
+  - id: VC_PERSONA_SCOPE
+    description: >-
+      Attendant-facing output may contain no acuity, no score, no risk word and
+      no clinical interpretation. Checked against the attendant lexicon
+      allow-list rather than a deny-list, because a deny-list on this surface is
+      not safe enough.
+    on_violation: reject_hard
+    severity: CRITICAL
+
+  - id: VC_LENGTH
+    description: "Rendered text must be within max_words for the epistemic state. A nurse view that needs scrolling has failed."
+    on_violation: reject_and_regenerate
+
+  - id: VC_DISCLOSURE_PRESENT
+    description: "Every item in required_disclosures must be present in the rendered text."
+    on_violation: reject_and_regenerate
+
+fallback_policy:
+  max_regeneration_attempts: 2
+  on_exhaustion: use_deterministic_template
+  deterministic_template_note: >-
+    The template renderer is a pure function of the Safety Contract and cannot
+    violate the grammar by construction. It is also what runs when the LLM is
+    switched off entirely. Every rejection, every regeneration and every
+    fallback is written to the audit log with the offending text retained for
+    governance review.
+
+# -----------------------------------------------------------------------------
+# ATTENDANT SURFACE - allow-list, not deny-list
+# -----------------------------------------------------------------------------
+attendant_allowed_vocabulary:
+  permitted_intents:
+    - timed_observation_task      # "Count his breaths for 15 seconds."
+    - binary_observation_question # "Does he answer when you call his name?"
+    - comparison_question         # "Is he more sleepy than when you arrived?"
+    - receipt_confirmation        # "Your report reached the nurse at 11:32."
+    - escalation_acknowledgement  # "A nurse has been asked to check him."
+    - consent_statement
+  forbidden_absolutely:
+    - any acuity level
+    - any score or number describing the patient's condition
+    - any queue position or estimated time to be seen
+    - any risk word (risk, serious, critical, urgent, danger, worse, deteriorating)
+    - any clinical interpretation of what they reported
+    - any reassurance
+  rationale: >-
+    The attendant is a SENSOR AND A HUMAN BEING, in that order for the data
+    model and the reverse order for the interface. They are given a concrete,
+    observable job and an honest receipt. They are never given a number to
+    argue with at the desk, and they are never told their relative is fine.

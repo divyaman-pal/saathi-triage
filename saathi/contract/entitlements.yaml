@@ -1,0 +1,187 @@
+# =============================================================================
+# SAATHI ROLE ENTITLEMENTS
+# -----------------------------------------------------------------------------
+# BACKEND-ENFORCED. This file is loaded by core/rbac.py and consulted at three
+# distinct points in every request:
+#
+#   1. BEFORE RETRIEVAL   - the query itself is scoped; unauthorised rows are
+#                           never read out of the store.
+#   2. BEFORE ANALYSIS    - the feature assembler receives an already-redacted
+#                           evidence set.
+#   3. BEFORE ANY LLM CALL - the payload is projected through the role's field
+#                           allow-list. We never send a model data the caller
+#                           may not see and rely on the model to withhold it.
+#
+# Hiding a widget in the UI is not access control. Every rule below is tested
+# by an unauthorised HTTP call in tests/test_rbac.py.
+# =============================================================================
+
+entitlements_version: "1.2"
+effective_from: "2026-01-01"
+default_decision: DENY          # anything not explicitly granted is denied
+
+roles:
+
+  triage_nurse:
+    label: "Triage Nurse"
+    description: "At the desk. Under time pressure. Owns the queue in front of them."
+    row_scope: own_queue
+    resources:
+      patient_clinical_detail: { access: full,      scope: own_queue }
+      acuity_score:            { access: full,      scope: own_queue }
+      ewer_components:         { access: full,      scope: own_queue }
+      raw_complaint_text:      { access: full,      scope: own_queue }
+      attendant_free_text:     { access: full,      scope: own_queue }
+      raw_video_frames:        { access: denied,    scope: none, reason: "No role in this system may read raw frames. They are never persisted." }
+      derived_camera_features: { access: full,      scope: own_queue }
+      other_patients_data:     { access: denied,    scope: none }
+      override_history:        { access: full,      scope: own_overrides }
+      subgroup_performance:    { access: denied,    scope: none }
+      audit_log:               { access: denied,    scope: none }
+      patient_identifiers:     { access: full,      scope: own_queue }
+      cost_telemetry:          { access: denied,    scope: none }
+    actions: [view_queue, accept_recommendation, override_acuity, record_recheck, escalate, request_clarification]
+    can_downgrade_acuity: true
+    downgrade_requires: [reason_code, evidence_snapshot, identity]
+
+  ed_physician:
+    label: "ED Physician / Charge Nurse"
+    description: "Running the floor. Needs the whole queue, not one patient."
+    row_scope: own_floor
+    resources:
+      patient_clinical_detail: { access: full,      scope: own_floor }
+      acuity_score:            { access: full,      scope: own_floor }
+      ewer_components:         { access: full,      scope: own_floor }
+      raw_complaint_text:      { access: full,      scope: own_floor }
+      attendant_free_text:     { access: full,      scope: own_floor }
+      raw_video_frames:        { access: denied,    scope: none, reason: "Never persisted. No role can read them." }
+      derived_camera_features: { access: full,      scope: own_floor }
+      other_patients_data:     { access: full,      scope: own_floor }
+      override_history:        { access: full,      scope: own_floor }
+      subgroup_performance:    { access: full,      scope: own_floor }
+      audit_log:               { access: read_only, scope: own_floor }
+      patient_identifiers:     { access: full,      scope: own_floor }
+      cost_telemetry:          { access: read_only, scope: own_floor }
+    actions: [view_queue, view_floor_risk, override_acuity, reassign, view_override_history, view_surge_posture, acknowledge_batch]
+    can_downgrade_acuity: true
+    downgrade_requires: [reason_code, evidence_snapshot, identity]
+
+  attendant:
+    label: "Family Attendant"
+    description: "Beside the patient, on their own phone. Not a clinician. Never shown a score."
+    row_scope: own_patient
+    resources:
+      patient_clinical_detail: { access: denied,    scope: none, reason: "The attendant is a reporter, not a recipient of clinical assessment." }
+      acuity_score:            { access: denied,    scope: none, reason: "HARD RULE. Showing a family an acuity level converts a clinical instrument into a negotiating position and creates a direct incentive to misreport." }
+      ewer_components:         { access: denied,    scope: none }
+      raw_complaint_text:      { access: own_only,  scope: own_patient }
+      attendant_free_text:     { access: own_only,  scope: own_patient }
+      raw_video_frames:        { access: denied,    scope: none }
+      derived_camera_features: { access: denied,    scope: none }
+      other_patients_data:     { access: denied,    scope: none }
+      override_history:        { access: denied,    scope: none }
+      subgroup_performance:    { access: denied,    scope: none }
+      audit_log:               { access: denied,    scope: none }
+      patient_identifiers:     { access: own_only,  scope: own_patient }
+      cost_telemetry:          { access: denied,    scope: none }
+      queue_position:          { access: denied,    scope: none, reason: "Displaying a position invites gaming and invites conflict at the desk." }
+      wait_time_own:           { access: own_only,  scope: own_patient }
+      receipt_of_report:       { access: own_only,  scope: own_patient }
+    actions: [answer_prompt, submit_observation, raise_concern, view_own_receipt, withdraw_consent]
+    can_downgrade_acuity: false
+    escalation_effect: nurse_recheck_only
+    escalation_note: >-
+      Pressing 'I am worried' routes to nurse_recheck_trigger and NOTHING else.
+      It has no path into acuity, into EWER, or into queue order. This is
+      enforced in core/escalation.py, not in the UI, and is tested by
+      tests/test_invariants.py::test_attendant_non_gaming.
+
+  administrator:
+    label: "Hospital Administrator / Quality Lead"
+    description: "Governance and quality. Needs population truth, not patient detail."
+    row_scope: aggregate
+    resources:
+      patient_clinical_detail: { access: denied,    scope: none, reason: "Governance does not require individual clinical narrative." }
+      acuity_score:            { access: aggregate, scope: aggregate }
+      ewer_components:         { access: aggregate, scope: aggregate }
+      raw_complaint_text:      { access: denied,    scope: none }
+      attendant_free_text:     { access: denied,    scope: none }
+      raw_video_frames:        { access: denied,    scope: none }
+      derived_camera_features: { access: aggregate, scope: aggregate }
+      other_patients_data:     { access: aggregate, scope: aggregate }
+      override_history:        { access: aggregate_with_identity, scope: aggregate,
+                                 reason: "Clinician identity is retained here ONLY because override accountability is a named governance obligation." }
+      subgroup_performance:    { access: full,      scope: aggregate }
+      audit_log:               { access: read_only, scope: aggregate }
+      patient_identifiers:     { access: denied,    scope: none }
+      cost_telemetry:          { access: full,      scope: aggregate }
+    actions: [view_aggregate_metrics, view_subgroup_performance, view_override_trend, view_cost_telemetry, export_governance_report]
+    can_downgrade_acuity: false
+    minimum_aggregation_cell_size: 5
+    aggregation_note: >-
+      Any aggregate cell containing fewer than 5 encounters is SUPPRESSED rather
+      than displayed, to prevent re-identification through small-cell inference
+      on a subgroup breakdown.
+
+# -----------------------------------------------------------------------------
+# FIELD-LEVEL CLASSIFICATION
+# Determines what may leave the process boundary, and specifically what may be
+# placed in an LLM prompt.
+# -----------------------------------------------------------------------------
+field_classes:
+
+  DIRECT_IDENTIFIER:
+    fields: [patient_name, phone_number, abha_number, address, attendant_name, attendant_phone]
+    llm_egress: FORBIDDEN
+    persistence: "Only in the ED's existing registration store. SAATHI holds a pseudonymous encounter id."
+    display: "Nurse and physician views only."
+
+  BIOMETRIC:
+    fields: [face_embedding, face_track_id]
+    llm_egress: FORBIDDEN
+    persistence: "Session-scoped, encrypted at rest, destroyed at disposition. No cross-visit linkage. No re-identification across encounters is possible by construction."
+    display: "Never displayed to any role."
+
+  RAW_MEDIA:
+    fields: [video_frame, audio_waveform]
+    llm_egress: FORBIDDEN
+    persistence: "NEVER WRITTEN TO DISK. Processed in memory on-device and discarded within the window. There is no retrieval API for this class because there is nothing to retrieve."
+    display: "Never displayed to any role."
+
+  CLINICAL_DERIVED:
+    fields: [heart_rate, resp_rate, spo2, sbp, temp, stillness_minutes, work_of_breathing, posture, arrival_mode, shock_index]
+    llm_egress: ALLOWED_WITHIN_SAFETY_CONTRACT
+    persistence: "Retained per retention_policy.clinical_derived."
+    display: "Nurse, physician full. Administrator aggregate. Attendant never."
+
+  FREE_TEXT_UNTRUSTED:
+    fields: [complaint_text, attendant_free_text]
+    llm_egress: REDACT_THEN_ALLOW
+    redaction: [names, phone_numbers, abha_numbers, addresses, dates_of_birth]
+    injection_handling: "Wrapped in an explicit untrusted-data envelope. Instruction-like content is neutralised before the call and the LLM's output is validated against the Safety Contract regardless."
+    persistence: "Retained per retention_policy.free_text."
+    display: "Nurse, physician full. Attendant own only. Administrator never."
+
+  GOVERNANCE:
+    fields: [override_record, audit_event, model_version, contract_version]
+    llm_egress: FORBIDDEN
+    persistence: "Retained per retention_policy.governance."
+    display: "Per role table above."
+
+# -----------------------------------------------------------------------------
+# RETENTION AND DELETION
+# DPDP Act 2023 - storage limitation and erasure obligations.
+# -----------------------------------------------------------------------------
+retention_policy:
+  raw_media:          { retention: "none", deletion: "not applicable - never written", basis: "data minimisation" }
+  biometric:          { retention: "session", deletion: "automatic at disposition, verified by a scheduled sweep", basis: "purpose limitation" }
+  clinical_derived:   { retention_days: 1095, deletion: "hard delete on schedule; anonymised aggregate may persist", basis: "clinical record obligation" }
+  free_text:          { retention_days: 1095, deletion: "hard delete on schedule", basis: "clinical record obligation" }
+  governance:         { retention_days: 2555, deletion: "hard delete on schedule", basis: "clinical accountability, 7 years" }
+  telemetry:          { retention_days: 365,  deletion: "hard delete on schedule", basis: "operational" }
+  consent_record:     { retention_days: 2555, deletion: "retained for the life of the accountability obligation", basis: "DPDP consent evidence" }
+  erasure_request_sla_days: 30
+  erasure_exclusions: >-
+    Governance and audit records required for clinical accountability are
+    retained under the legal-obligation basis and are excluded from erasure
+    requests. This exclusion is disclosed at the point of consent.

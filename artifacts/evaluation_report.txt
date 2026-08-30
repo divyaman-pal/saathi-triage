@@ -1,0 +1,288 @@
+==============================================================================
+SAATHI EVALUATION
+==============================================================================
+contract v2.0.1 | rules v1.3 | cost policy v1.4
+cost ratio 12:1 -> operating threshold 0.0769
+Building 1600 held-out encounters (seed disjoint from training) ...
+
+==============================================================================
+1. ARRIVAL ACUITY - deterministic rules layer (the cold-start system)
+==============================================================================
+This is what runs on day one at any site, before a single prospective
+case has been collected. No learned parameters. Contract age bands and
+clinician-authored red flags only.
+
+  exact agreement         0.456  [0.431, 0.480]  (n=1600)
+  UNDER-triage (any)      0.076  [0.064, 0.090]  (n=1600)
+  UNDER-triage (L1/L2 missed to L3+)   0.062  [0.051, 0.075]  (n=1600)   <-- the number that matters
+  OVER-triage (any)       0.469  [0.444, 0.493]  (n=1600)
+
+  Confusion matrix (rows = truth, cols = assigned):
+          L1      L2      L3      L4      L5    
+    L1       6     16      7      0      0 
+    L2      25    133     92      0      0 
+    L3      17    259    583      6      0 
+    L4       1     64    341      7      0 
+    L5       0      2     36      5      0 
+
+  Under-triage by age band (the age-stratification check):
+    age_12_18       0.060  [0.029, 0.119]  (n=116)
+    age_18_65       0.025  [0.017, 0.037]  (n=884)
+    age_1_5         0.121  [0.072, 0.197]  (n=107)
+    age_5_12        0.000  [0.000, 0.024]  (n=157)
+    age_65_80       0.181  [0.138, 0.234]  (n=243)
+    age_80_plus     0.148  [0.088, 0.236]  (n=88)
+
+==============================================================================
+2. DETERIORATION MODEL - discrimination, then the thing that matters
+==============================================================================
+  Prediction task : deterioration onset within 30 minutes
+  Event rate      : 0.043  (69 of 1600)
+  AUC (model)     : 0.709   <-- NOT the headline. See below.
+  AUC (rules-only): 0.542
+
+  AUC is reported for completeness and then set aside. We do not operate
+  at every threshold; we operate at one, and it is derived from a cost ratio.
+
+  Operating point: p >= 0.0769  (cost-derived, ratio 12:1)
+    sensitivity           0.391  [0.285, 0.509]  (n=69)   <-- HEADLINE
+    under-triage rate     0.609  [0.491, 0.715]  (n=69)   <-- HEADLINE
+    specificity           0.850  [0.831, 0.867]  (n=1531)
+    over-triage rate      0.150  [0.133, 0.169]  (n=1531)
+    escalation rate       0.161  [0.143, 0.179]  (n=1600)   <-- must fit the alert budget
+
+  Sensitivity per ground-truth arrival acuity:
+    truth L1  n=2 - too few events to estimate; NOT reported
+    truth L2   0.652  [0.449, 0.812]  (n=23)
+    truth L3   0.290  [0.161, 0.466]  (n=31)
+    truth L4   0.167  [0.047, 0.448]  (n=12)
+    truth L5  n=1 - too few events to estimate; NOT reported
+
+==============================================================================
+3. CALIBRATION BY AGE GROUP - does 0.08 mean eight in a hundred, HERE?
+==============================================================================
+
+  paediatric  (n=385, observed event rate 0.036)
+    calibration-in-the-large: mean predicted 0.0390 vs observed 0.0364   bias +0.0027
+      bin              n   mean pred   observed
+      [0.00,0.02)     83     0.0011     0.0000
+      [0.02,0.05)    221     0.0271     0.0181
+      [0.05,0.10)     44     0.0779     0.0682
+      [0.10,0.20)     35     0.1414     0.1714
+
+  adult  (n=884, observed event rate 0.049)
+    calibration-in-the-large: mean predicted 0.0399 vs observed 0.0486   bias -0.0087
+      bin              n   mean pred   observed
+      [0.00,0.02)    211     0.0077     0.0237
+      [0.02,0.05)    524     0.0324     0.0458
+      [0.05,0.10)     92     0.0781     0.0761
+      [0.10,0.20)     45     0.1317     0.1333
+      [0.20,0.40)     11     0.2380     0.0909
+
+  geriatric  (n=331, observed event rate 0.036)
+    calibration-in-the-large: mean predicted 0.0504 vs observed 0.0363   bias +0.0141
+      bin              n   mean pred   observed
+      [0.00,0.02)     22     0.0005     0.0000
+      [0.02,0.05)    217     0.0295     0.0276
+      [0.05,0.10)     38     0.0889     0.0526
+      [0.10,0.20)     52     0.1246     0.0769
+
+  Reading this table: a positive bias means the model is over-predicting
+  deterioration in that group - it will over-triage them. A negative bias
+  means it under-predicts, and under-prediction in the elderly is the
+  specific failure this whole architecture exists to prevent.
+
+==============================================================================
+4. SYMMETRIC vs ASYMMETRIC THRESHOLD - the same model, two policies
+==============================================================================
+
+                                           symmetric 0.500 cost-derived 0.0769
+  sensitivity                                        0.000             0.391
+  UNDER-triage rate                                  1.000             0.609
+  over-triage rate                                   0.001             0.150
+  specificity                                        0.999             0.850
+  patients under-triaged                            69.000            42.000
+  patients over-triaged                              1.000           230.000
+  policy cost per 100 patients                      51.812            45.875
+
+  Patients the accuracy-optimised threshold LEAVES IN THE WAITING ROOM: 24
+    P-900064  p=0.1739  deteriorated=YES  cost-derived -> L2, accuracy-optimised -> L4
+    P-900188  p=0.1600  deteriorated=YES  cost-derived -> L2, accuracy-optimised -> L4
+    P-900337  p=0.2857  deteriorated=YES  cost-derived -> L2, accuracy-optimised -> L3
+    P-900385  p=0.1274  deteriorated=YES  cost-derived -> L2, accuracy-optimised -> L4
+    P-900389  p=0.1274  deteriorated=YES  cost-derived -> L2, accuracy-optimised -> L4
+    P-900416  p=0.1059  deteriorated=YES  cost-derived -> L2, accuracy-optimised -> L4
+    P-900542  p=0.1500  deteriorated=YES  cost-derived -> L2, accuracy-optimised -> L4
+    P-900613  p=0.1379  deteriorated=YES  cost-derived -> L2, accuracy-optimised -> L4
+    P-900623  p=0.0851  deteriorated=YES  cost-derived -> L2, accuracy-optimised -> L5
+    P-900646  p=0.0833  deteriorated=YES  cost-derived -> L2, accuracy-optimised -> L5
+    ... and 14 more
+
+  The symmetric column reads 0.000 sensitivity. That is not a broken
+  comparison - it is the point. With a 4% event rate, a WELL-CALIBRATED
+  model should almost never emit p > 0.5, because more than half of such
+  patients really would have to deteriorate. An accuracy-optimised
+  threshold on a rare event is not conservative; it is inert.
+
+  This is the argument, in patients rather than percentages. Choosing
+  0.5 is not choosing 'no policy'. It is silently choosing a 1:1 cost
+  ratio, and asserting that an unattended deterioration and a wasted
+  nurse walk are equally bad.
+
+  SENSITIVITY ANALYSIS - required by cost_policy.yaml:
+    ratio  threshold     sens    under     over  escalated
+        6     0.1429    0.130    0.870    0.031      0.035
+       12     0.0769    0.391    0.609    0.150      0.161
+       24     0.0400    0.522    0.478    0.282      0.292
+
+  If a conclusion holds only at exactly 12:1, it is an artefact of the
+  parameter rather than a property of the system, and must be reported so.
+
+  DECISION CURVE (net benefit; higher is better at that threshold):
+   threshold     model   escalate-all   escalate-none
+      0.0200    0.0244         0.0236          0.0000
+      0.0500    0.0091        -0.0072          0.0000
+      0.0769    0.0049        -0.0366          0.0000  <-- operating point
+      0.1000    0.0022        -0.0632          0.0000
+      0.2000   -0.0009        -0.1961          0.0000
+      0.3500   -0.0003        -0.4721          0.0000
+      0.5000   -0.0006        -0.9138          0.0000
+
+==============================================================================
+5. BASELINES - what does the learned model actually add?
+==============================================================================
+
+  model at the cost-derived threshold p >= 0.0769
+    sensitivity 0.391   under-triage 0.609   over-triage 0.150   cost/100 45.88
+
+  rules-only cold start, MATCHED to the same escalation rate
+    (score >= 0.458, giving 258 escalations against the model's 257)
+    sensitivity 0.232   under-triage 0.768   over-triage 0.158   cost/100 54.87
+
+    The learned model is worth +0.159 sensitivity at identical nurse load.
+
+  nurse-alone (triage once, never re-assess) - today's practice
+    of the 69 patients who deteriorated during the wait, the arrival
+    snapshot had already placed 34 at L1/L2. The remaining 35 were correctly triaged on arrival and then not looked at again.
+    sensitivity to in-wait deterioration   0.493  [0.378, 0.608]  (n=69)
+
+    THIS IS THE GAP SAATHI EXISTS TO CLOSE. It is not a claim that the
+    nurse was wrong - the arrival decision was right. It is a claim that
+    the arrival decision was the only one anybody made.
+
+  escalate-everyone (the trivial policy)
+    sensitivity 1.000   over-triage 1.000   cost/100 95.69
+    Never misses anyone, and would be ignored by the second shift.
+
+==============================================================================
+6. WHOLE-SYSTEM ESCALATION - every path, running the real pipeline
+==============================================================================
+  Held-out cohort: 260 encounters, 9 of whom deteriorated during the wait.
+
+    urgency actually RAISED for a deteriorating patient    0.444  [0.189, 0.733]  (n=9)
+    ANY action taken (raised, flagged, re-check forced)    1.000  [0.701, 1.000]  (n=9)   <-- the safety net
+
+    urgency raised for a patient who did NOT deteriorate   0.187  [0.144, 0.240]  (n=251)   <-- the price paid
+    any action for a patient who did not deteriorate       0.713  [0.654, 0.766]  (n=251)
+
+  Which path caught the deteriorating patients whose urgency rose:
+    ARRIVAL                                   3
+    TRAJECTORY_MATERIAL_WORSENING             1
+
+  Read that list carefully. If one path dominates, the other six are
+  decoration. If the model appears far down it, the model is not what
+  is protecting these patients - the contract and the rules are.
+
+==============================================================================
+7. SUBGROUP PERFORMANCE - stratified, with the uncomfortable ones included
+==============================================================================
+
+  by age band:
+    group                      n  events         sensitivity (95% CI)  escalation rate
+    age_0_1                    5       0 too few events - NOT reported            0.400
+    age_12_18                116       8  0.750  [0.409, 0.928]  (n=8)            0.267
+    age_18_65                884      43  0.256  [0.149, 0.402]  (n=43)            0.095
+    age_1_5                  107       2 too few events - NOT reported            0.159
+    age_5_12                 157       4 too few events - NOT reported            0.197
+    age_65_80                243       8  0.250  [0.071, 0.591]  (n=8)            0.255
+    age_80_plus               88       4 too few events - NOT reported            0.341
+
+  by sex:
+    group                      n  events         sensitivity (95% CI)  escalation rate
+    F                        837      39  0.282  [0.165, 0.438]  (n=39)            0.133
+    M                        763      30  0.533  [0.361, 0.698]  (n=30)            0.191
+
+  by Fitzpatrick skin-tone band:
+    rPPG SNR degrades at higher Fitzpatrick types under standard pipelines. This row is a MONITORED METRIC, not a footnote.
+    group                      n  events         sensitivity (95% CI)  escalation rate
+    I-II                     204       8  0.250  [0.071, 0.591]  (n=8)            0.147
+    III-IV                   919      46  0.391  [0.264, 0.535]  (n=46)            0.156
+    V-VI                     477      15  0.467  [0.248, 0.699]  (n=15)            0.176
+
+  by attendant present:
+    If performance depends on whether a family member came along, that is an equity problem and it belongs on this page.
+    group                      n  events         sensitivity (95% CI)  escalation rate
+    ABSENT                   473      19  0.421  [0.231, 0.637]  (n=19)            0.175
+    present                 1127      50  0.380  [0.259, 0.518]  (n=50)            0.154
+
+  by prior record:
+    group                      n  events         sensitivity (95% CI)  escalation rate
+    linked                   739      29  0.276  [0.147, 0.457]  (n=29)            0.116
+    none                     861      40  0.475  [0.329, 0.625]  (n=40)            0.199
+
+  by language:
+    group                      n  events         sensitivity (95% CI)  escalation rate
+    Awadhi                   192       9  0.333  [0.121, 0.646]  (n=9)            0.161
+    Bengali                  206       6 too few events - NOT reported            0.136
+    Bhojpuri                 215       5 too few events - NOT reported            0.195
+    Gondi                    186       7 too few events - NOT reported            0.118
+    Hindi                    203      14  0.357  [0.163, 0.612]  (n=14)            0.227
+    Marathi                  184       7 too few events - NOT reported            0.163
+    Tamil                    200      10  0.600  [0.313, 0.832]  (n=10)            0.145
+    Telugu                   214      11  0.364  [0.152, 0.646]  (n=11)            0.136
+
+==============================================================================
+8. ALERT BUDGET - can the department actually absorb this?
+==============================================================================
+
+  TIER_A: 21 arrivals/hour, 3 triage nurse(s)
+    escalation rate 0.161 -> 3.4 escalations/hour
+    floor can absorb 12/hour; policy budget 8/hour -> WITHIN BUDGET
+
+  TIER_B: 11 arrivals/hour, 2 triage nurse(s)
+    escalation rate 0.161 -> 1.8 escalations/hour
+    floor can absorb 8/hour; policy budget 8/hour -> WITHIN BUDGET
+
+  TIER_C: 4 arrivals/hour, 1 triage nurse(s)
+    escalation rate 0.161 -> 0.6 escalations/hour
+    floor can absorb 4/hour; policy budget 8/hour -> WITHIN BUDGET
+
+==============================================================================
+9. WHAT THESE NUMBERS DO NOT SHOW
+==============================================================================
+  The cohort is SIMULATED from a process we wrote (saathi/data/cohort.py).
+    A model fitted to it recovers that process. None of the above is evidence
+    about clinical performance in any emergency department.
+  
+  No transfer claim is made from MIMIC-IV-ED or NHAMCS. Both are US datasets;
+    neither describes an Indian district ED. Pre-training would be FROZEN and
+    treated as a prior, with prospective validation through BODH/ABDM.
+  
+  rPPG values here are a replayed quality trace, not a trained model. The
+    reliability weight of 0.35 for respiratory rate from video, and the SNR
+    floor that rejects it outright, encode our actual confidence in it.
+  
+  The skin-tone subgroup row above reflects a penalty WE INJECTED into the
+    simulator to make the monitoring visible. It is not a measurement of
+    real-world rPPG bias - it is a demonstration that the metric is watched.
+  
+  Automation bias is NOT measured here and cannot be. Whether showing a nurse
+    a recommendation improves or anchors their judgement is answerable only by
+    a prospective study with a shadow-mode arm, which is why the deployment
+    plan starts with thirty days of exactly that.
+  
+  The feedback loop is real and unhandled: if SAATHI escalates a patient who is
+    then seen sooner and does well, the label is contaminated. Any retraining
+    must account for it; none of the above does.
+
+Machine-readable results written to C:\Users\divya\Downloads\accenture_divyaman\artifacts\evaluation.json

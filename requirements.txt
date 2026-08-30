@@ -1,0 +1,27 @@
+# SAATHI V2 — pinned to the versions this prototype was built and tested against.
+# Python 3.11+
+
+# Contract, API and schema layer
+fastapi==0.141.1
+uvicorn==0.52.4
+pydantic==2.13.4
+PyYAML==6.0.3
+httpx==0.28.1
+
+# Modelling
+xgboost==3.2.0
+scikit-learn==1.9.0
+numpy==2.2.6
+pandas==2.2.2
+shap==0.51.0
+
+# Operator surfaces
+streamlit==1.62.0
+
+# Bounded LLM integration. The system runs fully without this installed or
+# configured - the deterministic template renderer takes over and every
+# safety-path output is unchanged.
+anthropic==0.125.0
+
+# Safety invariant suite
+pytest==9.1.1
