@@ -21,6 +21,7 @@ Run with:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -46,7 +47,12 @@ from saathi.core.contract_loader import (  # noqa: E402
     get_contract,
 )
 from saathi.core.injection_guard import scan  # noqa: E402
-from saathi.core.models import Role  # noqa: E402
+from saathi.core.models import (  # noqa: E402
+    Assessment,
+    Evidence,
+    Role,
+    SafetyContract,
+)
 from saathi.core.rbac import (  # noqa: E402
     AccessDenied,
     Principal,
@@ -396,10 +402,35 @@ def banner(text: str, color: str) -> None:
                 unsafe_allow_html=True)
 
 
+def _schema_fingerprint() -> str:
+    """
+    A short hash of the shapes the cached Runtime hands to the UI.
+
+    st.cache_resource survives a hot code reload: the platform re-executes the
+    script in the SAME process and the cache comes with it. So after a deploy
+    that changes a model, the cache can still hold objects built by the previous
+    class - which is exactly how `Assessment` lost its `vitals` attribute live,
+    with correct code on both sides of the boundary.
+
+    Keying the cache on the field names means any schema change invalidates it
+    automatically. This is not a version constant precisely because a version
+    constant is a thing a person has to remember to bump.
+    """
+    shape = "|".join(
+        f"{m.__name__}:{','.join(sorted(m.model_fields))}"
+        for m in (Assessment, Evidence, SafetyContract)
+    )
+    return hashlib.sha256(shape.encode()).hexdigest()[:12]
+
+
+SCHEMA_FINGERPRINT = _schema_fingerprint()
+
+
 @st.cache_resource(show_spinner="Building cohort and running the pipeline…")
-def load_runtime(tier: str):
-    rt = get_runtime(tier=tier, rebuild=True)
-    return rt
+def load_runtime(tier: str, fingerprint: str):
+    """`fingerprint` is unused in the body and load-bearing in the signature:
+    it is what forces a rebuild when the models change."""
+    return get_runtime(tier=tier, rebuild=True)
 
 
 def principal_for(role: Role, rt, own_patient: str | None = None) -> Principal:
@@ -1733,7 +1764,7 @@ def main() -> None:
             '<div class="tiny" style="margin-bottom:14px">Clinical decision support. Raises '
             'urgency, never lowers it. Does not diagnose.</div>', unsafe_allow_html=True)
         tier = st.selectbox("Deployment tier", c.tiers, index=0)
-        rt = load_runtime(tier)
+        rt = load_runtime(tier, SCHEMA_FINGERPRINT)
 
         persona = st.radio("Persona", [
             "Triage nurse", "ED physician / charge nurse", "Family attendant",
