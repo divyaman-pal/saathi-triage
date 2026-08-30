@@ -13,7 +13,11 @@ xgboost==3.2.0
 scikit-learn==1.9.0
 numpy==2.2.6
 pandas==2.2.2
-shap==0.51.0
+
+# NOTE: the `shap` package is deliberately NOT a dependency. Feature attribution
+# uses xgboost's own exact TreeSHAP via `pred_contribs=True` (see
+# core/risk_model.py), so pulling in the shap library would add a slow, heavy
+# install for code that never imports it.
 
 # Operator surfaces
 streamlit==1.62.0

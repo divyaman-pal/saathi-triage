@@ -8,3 +8,7 @@ __pycache__/
 venv/
 .env
 .DS_Store
+
+# SQLite WAL sidecars, regenerated at runtime
+artifacts/saathi_audit.db-wal
+artifacts/saathi_audit.db-shm

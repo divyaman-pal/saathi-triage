@@ -10,8 +10,10 @@ font = "sans serif"
 
 [server]
 headless = true
-enableCORS = false
-enableXsrfProtection = true
+# CORS/XSRF are left at their secure defaults. Streamlit Cloud terminates TLS
+# and sets origin policy itself, so relaxing them here would weaken the app for
+# no benefit. The Dockerfile relaxes XSRF only because HF-style proxies rewrite
+# the origin - that is a deployment-specific exception, not the default.
 
 [browser]
 gatherUsageStats = false
