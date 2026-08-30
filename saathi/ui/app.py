@@ -420,6 +420,17 @@ def _schema_fingerprint() -> str:
         f"{m.__name__}:{','.join(sorted(m.model_fields))}"
         for m in (Assessment, Evidence, SafetyContract)
     )
+    # Include the source mtimes of the modules the cached objects come from.
+    # Field names alone are read off whatever class is currently in sys.modules,
+    # which after a hot reload may be the OLD one - so the fingerprint would
+    # agree with itself and never invalidate. File mtimes change on deploy
+    # regardless of what the interpreter has already imported.
+    for mod in ("core/models.py", "core/pipeline.py", "runtime.py"):
+        f = ROOT / "saathi" / mod
+        try:
+            shape += f"|{mod}:{f.stat().st_mtime_ns}"
+        except OSError:
+            pass
     return hashlib.sha256(shape.encode()).hexdigest()[:12]
 
 
@@ -710,7 +721,13 @@ def vitals_strip(a) -> str:
     A patient with nothing usable renders dashes - which is the honest state and
     is exactly what an unassessable patient should look like.
     """
-    v = a.vitals
+    # getattr, not a.vitals, on purpose. The platform hot-reloads app.py but
+    # leaves already-imported saathi.* modules in sys.modules, so after a deploy
+    # that adds a model field this UI can briefly run against instances of the
+    # PREVIOUS class. A missing attribute must degrade to "no usable vitals" -
+    # which is a state this row already renders honestly - rather than take the
+    # whole queue down. Same principle the pipeline applies to a failed channel.
+    v = getattr(a, "vitals", None)
     if not v:
         return '<span class="vt-none">&mdash;</span>'
     def fmt(cid: str, spec: dict) -> str:
