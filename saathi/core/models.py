@@ -665,6 +665,13 @@ class Assessment(BaseModel):
     override: OverrideRecord | None = None
     stage_latency_ms: dict[str, float] = Field(default_factory=dict)
 
+    # Latest quality-passed value per vital, for the at-a-glance queue row.
+    # Kept SEPARATE from supporting_evidence, which is a ranked explanation and
+    # deliberately truncated - a nurse scanning a worklist needs the current
+    # numbers whether or not they happened to make the top of the reasoning.
+    # Each entry: {value, unit, band, age_seconds, quality, method, critical}.
+    vitals: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
 
 # ---------------------------------------------------------------------------
 # Identifier helpers

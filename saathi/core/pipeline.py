@@ -46,6 +46,7 @@ from .gating import gate, latest_per_concept
 from .injection_guard import extract_symptoms
 from .llm import LLMClient, get_llm
 from .models import (
+    ThresholdBand,
     Acuity,
     Assessment,
     Channel,
@@ -347,6 +348,7 @@ class Pipeline:
         escalating = state.acuity_current.level < state.acuity_arrival.level or bool(hits)
         supporting, contradicting = fusion.split_supporting_contradicting(usable, escalating)
         supporting = self._attribute(supporting, prediction, fv)
+        vitals = self._vitals_snapshot(usable)
 
         # -- 12. Safety Contract --------------------------------------
         with t.time("contract_generation"):
@@ -426,6 +428,7 @@ class Pipeline:
             abstention=abst, ewer=rank, sla=sla,
             red_flags=hits, materiality=materiality,
             supporting_evidence=supporting[:8], contradictory_evidence=contradicting[:5],
+            vitals=vitals,
             channel_status=channel_status,
             missing_data=sorted(set(fv.missing)), stale_data=sorted(set(fv.stale)),
             model_route=fv.route, model_versions=versions,
@@ -496,6 +499,39 @@ class Pipeline:
             llm_enabled=cfg.llm_enabled and self.llm.enabled,
             tokens_in=tin, tokens_out=tout, latency_ms=llm_ms, model_id=model_id,
         )
+
+    VITAL_CONCEPTS = ("HEART_RATE", "RESP_RATE", "SPO2", "SBP", "TEMP")
+
+    def _vitals_snapshot(self, usable) -> dict:
+        """
+        Latest quality-passed reading per vital.
+
+        Only values that CLEARED their quality floor appear here, so the queue
+        row can never show a number the scoring engine itself refused to use.
+        A vital with no usable reading is absent rather than stale-but-shown -
+        the row renders a dash, which is the honest state.
+        """
+        out: dict = {}
+        for ev in usable:
+            cid = ev.concept_id
+            if cid not in self.VITAL_CONCEPTS:
+                continue
+            prev = out.get(cid)
+            if prev is not None and prev["_at"] >= ev.observed_at:
+                continue
+            out[cid] = {
+                "value": ev.value,
+                "unit": ev.unit,
+                "band": ev.threshold_band.value,
+                "critical": ev.threshold_band is ThresholdBand.CRITICAL,
+                "age_seconds": (ev.freshness.age_seconds if ev.freshness else None),
+                "quality": ev.signal_quality.status.value,
+                "method": ev.acquisition_method.value,
+                "_at": ev.observed_at,
+            }
+        for v in out.values():
+            v.pop("_at", None)
+        return out
 
     def _llm_payload(self, sc) -> dict:
         """

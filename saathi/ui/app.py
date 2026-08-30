@@ -229,6 +229,52 @@ CSS = """
                      background:var(--surface-card); box-shadow:var(--shadow); }
   [data-testid="stExpander"] summary { font-size:.85rem; font-weight:650; }
 
+
+  /* ---- worklist headline ---- */
+  .hd { display:flex; align-items:center; gap:10px; margin-bottom:2px; }
+  .hd-dot { width:24px; height:24px; border-radius:50%; background:var(--critical); color:#fff;
+            font-weight:800; font-size:.85rem; display:flex; align-items:center;
+            justify-content:center; flex:0 0 auto; }
+  .hd-n { font-size:1.5rem; font-weight:750; letter-spacing:-.02em; }
+
+  /* ---- section banner ---- */
+  .sec { display:flex; align-items:center; gap:9px; background:var(--surface-card);
+         border:1px solid var(--border); border-left:4px solid; border-radius:var(--r) var(--r) 0 0;
+         padding:9px 15px; margin:18px 0 0 0; box-shadow:var(--shadow); }
+  .sec-i { font-size:.95rem; }
+  .sec-t { font-weight:800; font-size:.82rem; letter-spacing:.07em; text-transform:uppercase; }
+  .sec-s { color:var(--ink-3); font-size:.82rem; }
+  .sec-c { margin-left:auto; color:var(--ink-3); font-size:.78rem; font-weight:600; }
+
+  /* ---- row: columns sit on a white slab with a coloured rule beneath ---- */
+  .cell { padding:2px 0; }
+  .rule { border-top:1px solid var(--border); border-left:4px solid transparent;
+          margin:6px 0 0 0; }
+  .row-action { font-weight:750; font-size:.92rem; letter-spacing:.01em; }
+  .row-why { font-size:.9rem; color:var(--ink); line-height:1.35; }
+  .row-meta { font-size:.76rem; color:var(--ink-2); }
+  .mv { display:inline-block; font-size:.72rem; font-weight:700; color:var(--serious);
+        background:#fff5e8; border-radius:3px; padding:1px 6px; margin-top:4px; }
+  .row-c { padding:8px 13px; font-size:.85rem; }
+
+  /* ---- vitals strip ---- */
+  .vt { display:inline-block; font-variant-numeric:tabular-nums; font-size:.8rem;
+        font-weight:650; color:var(--ink-2); background:var(--surface-sunk);
+        border-radius:3px; padding:2px 7px; margin:0 4px 3px 0; white-space:nowrap; }
+  .vt-warn { color:#8a5a00; background:#fff5e0; }
+  .vt-crit { color:#fff; background:var(--critical); }
+  .vt-none { color:var(--ink-3); font-size:.85rem; }
+
+  /* ---- footer safety line ---- */
+  .foot { text-align:center; color:var(--ink-3); font-size:.78rem; margin-top:26px;
+          padding-top:14px; border-top:1px solid var(--border); }
+
+  /* ---- sidebar floor card rows ---- */
+  .fs { display:flex; justify-content:space-between; align-items:baseline;
+        font-size:.83rem; padding:5px 0; border-bottom:1px solid var(--surface-sunk); }
+  .fs:last-child { border-bottom:none; }
+  .fs b { font-variant-numeric:tabular-nums; font-size:1rem; }
+
   /* ---- attendant phone surface ---- */
   .phone { max-width:430px; margin:0 auto; }
   .phone-q { font-size:1.65rem; font-weight:700; line-height:1.32; margin:2px 0 20px 0; }
@@ -250,7 +296,8 @@ def topbar(context: str, right: str = "") -> None:
     st.markdown(
         f'<div class="topbar"><div class="mark">S</div>'
         f'<div><div class="name">SAATHI</div>'
-        f'<div class="ctx">{context}</div></div>'
+        f'<div class="ctx"><span style="color:var(--good)">&#9679;</span> Connected '
+        f'&nbsp;·&nbsp; {context}</div></div>'
         f'<div class="spacer"></div><div class="ctx">{right}</div></div>',
         unsafe_allow_html=True)
 
@@ -620,6 +667,52 @@ def nurse_view(rt) -> None:
     nurse_worklist(rt)
 
 
+VITAL_GLYPH = {"HEART_RATE": "HR", "RESP_RATE": "RR", "SPO2": "SpO\u2082",
+               "SBP": "BP", "TEMP": "T"}
+
+
+def vitals_strip(a) -> str:
+    """
+    The at-a-glance numbers: any CRITICAL vital first and marked, then heart and
+    respiratory rate. Values appear only if they cleared their quality floor, so
+    the row can never show a figure the scoring engine itself refused to use.
+    A patient with nothing usable renders dashes - which is the honest state and
+    is exactly what an unassessable patient should look like.
+    """
+    v = a.vitals
+    if not v:
+        return '<span class="vt-none">&mdash;</span>'
+    def fmt(cid: str, spec: dict) -> str:
+        val = spec["value"]
+        if cid == "TEMP":
+            return f"{float(val):.1f}"
+        if cid == "SPO2":
+            return f"{float(val):.0f}%"
+        return f"{float(val):.0f}" if isinstance(val, (int, float)) else str(val)
+
+    out = []
+    for cid, spec in v.items():
+        if spec.get("critical"):
+            out.append(f'<span class="vt vt-crit">{VITAL_GLYPH.get(cid, cid)} '
+                       f'{esc(fmt(cid, spec))}</span>')
+    for cid in ("HEART_RATE", "RESP_RATE"):
+        spec = v.get(cid)
+        if not spec or spec.get("critical"):
+            continue
+        cls = "vt-warn" if spec["band"] == "CONCERNING" else ""
+        out.append(f'<span class="vt {cls}">{VITAL_GLYPH[cid]} {esc(fmt(cid, spec))}</span>')
+    return "".join(out) or '<span class="vt-none">&mdash;</span>'
+
+
+def section_head(icon: str, title: str, subtitle: str, count: str, colour: str) -> None:
+    st.markdown(
+        f'<div class="sec" style="border-left-color:{colour}">'
+        f'<span class="sec-i" style="color:{colour}">{icon}</span>'
+        f'<span class="sec-t" style="color:{colour}">{esc(title)}</span>'
+        f'<span class="sec-s">&mdash; {esc(subtitle)}</span>'
+        f'<span class="sec-c">{esc(count)}</span></div>', unsafe_allow_html=True)
+
+
 def nurse_worklist(rt) -> None:
     q = rt.queue()
     summary = rt.floor_summary()
@@ -630,85 +723,112 @@ def nurse_worklist(rt) -> None:
     for a in q:
         tiers[action_for(a)[0]].append(a)
 
-    # Header: one line, the only floor-level fact a triage nurse needs.
-    ratio_txt = f"surge {summary['surge_ratio']:.1f}x"
-    surge_tag = ("&nbsp;" + tag(ratio_txt, NHS["orange"])) if summary["surge_active"] else ""
-    st.markdown(f"## {len(tiers['NOW'])} need you now{surge_tag}", unsafe_allow_html=True)
-    st.markdown(f'<div class="tiny">{summary["n"]} people waiting · alerts capped at '
-                f'{budget}/h so this list stays readable · the full queue is below</div>',
-                unsafe_allow_html=True)
+    surge_tag = (tag(f"SURGE {summary['surge_ratio']:.1f}x", NHS["red"])
+                 if summary["surge_active"] else "")
+    st.markdown(
+        f'<div class="hd"><span class="hd-dot">!</span>'
+        f'<span class="hd-n">{len(tiers["NOW"])} need you now</span>{surge_tag}</div>'
+        f'<div class="tiny" style="margin:-2px 0 14px 34px">{summary["n"]} people waiting '
+        f'&nbsp;·&nbsp; alerts capped at {budget}/h so this list stays readable</div>',
+        unsafe_allow_html=True)
 
+    # -- GO NOW: exempt from the alert budget, never batched -----------------
     if tiers["NOW"]:
-        st.markdown("")
+        section_head("&#9888;", "GO NOW", "highest priority",
+                     f'{len(tiers["NOW"])} patients', NHS["red"])
         for a in tiers["NOW"]:
-            worklist_row(a, big=True)
+            worklist_row(a)
     else:
-        st.success("Nobody is flagged for immediate attention.")
+        st.markdown('<div class="card"><b>Nobody is flagged for immediate attention.</b>'
+                    '<div class="tiny">Red flags and unassessable patients would appear here.</div>'
+                    '</div>', unsafe_allow_html=True)
 
-    # SAATHI's actual contribution: not who is sick, but who CHANGED while waiting.
+    # -- The system's actual contribution: who CHANGED while waiting ---------
     changed = tiers["CHANGED"]
     if changed:
-        st.markdown(f"##### Got worse while waiting — {len(changed)}")
-        shown = changed[:batch]
-        for a in shown:
+        section_head("&#8599;", "GOT WORSE WHILE WAITING", "escalated after arrival",
+                     f"{len(changed)} patients", NHS["orange"])
+        for a in changed[:batch]:
             worklist_row(a)
         if len(changed) > batch:
             with st.expander(f"{len(changed) - batch} more — deferred by the alert budget, "
-                             f"not discarded"):
+                             f"re-ranked and marked, never discarded"):
                 for a in changed[batch:]:
                     worklist_row(a)
 
-    # In a surge everyone is past their safe wait, so per-patient SLA alerts carry
-    # no information. It collapses to one floor-level fact aimed at the charge nurse.
+    # -- In a surge everyone is past SLA, so it is a capacity fact ------------
     waiting = tiers["WAITING"]
     if waiting:
-        st.markdown("---")
-        if len(waiting) > batch:
-            st.markdown(f"**{len(waiting)} past their safe wait** — the floor is over capacity. "
-                        f"This is a staffing fact, not a per-patient alert. Charge nurse view "
-                        f"has the queue-level picture.")
-        with st.expander(f"Due for re-check · {len(waiting)}"):
+        section_head("&#9432;", "PAST THEIR SAFE WAIT", "capacity alert",
+                     f"{len(waiting)} patients", NHS["blue"])
+        st.markdown(
+            f'<div class="card" style="margin-top:-4px">'
+            f'<div style="font-size:1.05rem;font-weight:650">'
+            f'{len(waiting)} patients have crossed their safe waiting limit.</div>'
+            f'<div class="tiny">This reflects capacity, not individual deterioration. '
+            f'It is a staffing fact for the charge nurse, not {len(waiting)} separate alarms '
+            f'for the triage desk.</div></div>', unsafe_allow_html=True)
+        with st.expander(f"Show all {len(waiting)}"):
             for a in waiting:
                 worklist_row(a, compact=True)
 
-    with st.expander(f"Everyone else · {len(tiers['STABLE'])} stable"):
+    with st.expander(f"Everyone else — {len(tiers['STABLE'])} stable"):
         for a in tiers["STABLE"]:
             worklist_row(a, compact=True)
 
-
-def worklist_row(a, *, big: bool = False, compact: bool = False) -> None:
-    """
-    One NHS-style card per patient. The heavy left rule carries the acuity
-    colour, but the level and the word ride alongside it - NHS accessibility
-    guidance is explicit that colour must never be the only carrier.
-    """
-    _, action, why, colour = action_for(a)
-    cur, arr = a.acuity_current.level, a.acuity_arrival.level
-    moved = (f'&nbsp;<span class="tiny">&larr; was {arr}</span>' if cur < arr else "")
-    late = ("" if not a.sla.breached else
-            f'&nbsp;{tag("past safe wait", NHS["red"])}')
-
-    c1, c2 = st.columns([9, 1.5], vertical_alignment="center")
-    with c1:
-        if compact:
-            st.markdown(
-                f'<div class="row" style="border-left-color:{ACUITY_COLOR[cur]};padding:8px 14px">'
-                f'{acuity_chip(cur)} <b>{a.patient_id}</b>'
-                f'<span class="row-meta"> &nbsp;·&nbsp; {a.sla.waited_minutes:.0f} min'
-                f'{" · " + why if why else ""}</span></div>', unsafe_allow_html=True)
-        else:
-            st.markdown(
-                f'<div class="row" style="border-left-color:{colour}">'
-                f'<div class="row-action" style="color:{colour}">{action}</div>'
-                f'<div class="row-why" style="font-size:{1.12 if big else 1.0}rem">{why}</div>'
-                f'<div class="row-meta" style="margin-top:6px">{acuity_chip(cur)}{moved}'
-                f'&nbsp;·&nbsp; {a.patient_id} &nbsp;·&nbsp; {a.age_years:.0f}y '
-                f'&nbsp;·&nbsp; waiting {a.sla.waited_minutes:.0f} min{late}</div></div>',
+    st.markdown('<div class="foot">SAATHI can only raise urgency. It never lowers one. '
+                'A human override is required to reduce any acuity.</div>',
                 unsafe_allow_html=True)
+
+
+def worklist_row(a, *, compact: bool = False) -> None:
+    tier, action, why, colour = action_for(a)
+    cur, arr = a.acuity_current.level, a.acuity_arrival.level
+    sex = {"M": "M", "F": "F"}.get(a.sex, a.sex)
+
+    if compact:
+        c1, c2 = st.columns([9, 1.1], vertical_alignment="center")
+        c1.markdown(
+            f'<div class="row row-c" style="border-left-color:{ACUITY_COLOR[cur]}">'
+            f'{acuity_chip(cur)}&nbsp; <b>{a.patient_id}</b>'
+            f'<span class="row-meta">&nbsp; {a.age_years:.0f}y {sex} &nbsp;·&nbsp; '
+            f'waiting {a.sla.waited_minutes:.0f} min</span>'
+            f'<span style="float:right">{vitals_strip(a)}</span></div>',
+            unsafe_allow_html=True)
+        if c2.button("Open", key=f"open_{a.patient_id}", width="stretch"):
+            st.session_state["nurse_focus"] = a.patient_id
+            st.rerun()
+        return
+
+    pill = ""
+    if a.abstention.abstained:
+        pill = tag("cannot assess", NHS["purple"])
+    elif a.sla.breached:
+        pill = tag("past safe wait", NHS["red"])
+    moved = (f'<span class="mv">ESI {arr} &rarr; {cur}</span>' if cur < arr else "")
+
+    c1, c2, c3, c4, c5 = st.columns([1.5, 4.4, 1.9, 1.5, 0.95],
+                                    vertical_alignment="center")
+    with c1:
+        st.markdown(f'<div class="cell">{acuity_chip(cur)}<br>'
+                    f'<span class="row-meta">{a.patient_id}<br>{a.age_years:.0f}y {sex}</span>'
+                    f'</div>', unsafe_allow_html=True)
     with c2:
+        st.markdown(f'<div class="cell"><div class="row-action" style="color:{colour}">{esc(action)}'
+                    f'</div><div class="row-why">{esc(why)}</div>{moved}</div>',
+                    unsafe_allow_html=True)
+    with c3:
+        st.markdown(f'<div class="cell">{vitals_strip(a)}</div>', unsafe_allow_html=True)
+    with c4:
+        st.markdown(f'<div class="cell"><span class="row-meta num">'
+                    f'{a.sla.waited_minutes:.0f} min waiting</span><br>{pill}</div>',
+                    unsafe_allow_html=True)
+    with c5:
         if st.button("Open", key=f"open_{a.patient_id}", width="stretch"):
             st.session_state["nurse_focus"] = a.patient_id
             st.rerun()
+    st.markdown(f'<div class="rule" style="border-left-color:{colour}"></div>',
+                unsafe_allow_html=True)
 
 
 def nurse_card(rt, pid: str) -> None:
@@ -1631,14 +1751,20 @@ def main() -> None:
         st.markdown("---")
         s = rt.floor_summary()
         surge_txt = f"{s['surge_ratio']:.1f}x" if s["surge_active"] else "normal"
+        waits = [x.sla.waited_minutes for x in rt.assessments.values()] or [0.0]
+        avg_wait = sum(waits) / len(waits)
         st.markdown(
             '<div class="card" style="padding:12px 14px">'
-            '<div class="card-h" style="margin-bottom:7px">Floor</div>'
-            '<div style="display:flex;justify-content:space-between;font-size:.85rem">'
-            f'<span>Patients</span><b class="num">{s["n"]}</b></div>'
-            '<div style="display:flex;justify-content:space-between;font-size:.85rem;margin-top:3px">'
-            f'<span>Surge</span><b>{surge_txt}</b></div></div>',
-            unsafe_allow_html=True)
+            '<div class="card-h" style="margin-bottom:4px">Floor status</div>'
+            f'<div class="fs"><span>Patients in queue</span><b>{s["n"]}</b></div>'
+            f'<div class="fs"><span>Surge level</span>'
+            f'<b style="color:{NHS["red"] if s["surge_active"] else "inherit"}">{surge_txt}</b></div>'
+            f'<div class="fs"><span>Avg wait</span><b>{avg_wait:.0f} min</b></div>'
+            f'<div class="fs"><span>Past safe wait</span>'
+            f'<b style="color:{NHS["red"] if s["sla_breached"] else "inherit"}">'
+            f'{len(s["sla_breached"])}</b></div>'
+            f'<div class="fs"><span>Cannot assess</span><b>{len(s["abstained"])}</b></div>'
+            '</div>', unsafe_allow_html=True)
         st.caption(f"contract v{c.version} · grammar v{c.grammar_version} · "
                    f"rules v{c.ruleset_version} · cost v{c.policy_version}")
         st.caption("Every patient, vital sign and signal-quality trace in this demo is "
