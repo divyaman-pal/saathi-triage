@@ -11,11 +11,16 @@ httpx==0.28.1
 # Modelling
 xgboost==3.2.0
 scikit-learn==1.9.0
-numpy==2.2.6
-# 2.2.3 is the FIRST pandas release with cp313 wheels. On 2.2.2 a Python 3.13
-# host has to compile pandas from source, which on a one-CPU cloud container
-# takes upwards of ten minutes and usually fails outright. Do not pin lower.
-pandas==2.2.3
+# scipy is a transitive dependency of scikit-learn and is pinned EXPLICITLY:
+# left to resolve on its own it picks a build that caps numpy below 2.3, which
+# then conflicts with the numpy pin below. 1.16.2 supports numpy 2.3 and has
+# cp314 wheels. An unpinned transitive dependency is what broke this deploy.
+scipy==1.16.2
+# numpy 2.3.2 is the earliest release with cp314 wheels. Streamlit Cloud now
+# defaults to Python 3.14, and on 2.2.6 pip falls back to the source tarball and
+# builds numpy from scratch on one CPU. Every pin in this file must have a
+# prebuilt wheel for 3.11 through 3.14 - check before lowering any of them.
+numpy==2.3.2
 
 # NOTE: the `shap` package is deliberately NOT a dependency. Feature attribution
 # uses xgboost's own exact TreeSHAP via `pred_contribs=True` (see
