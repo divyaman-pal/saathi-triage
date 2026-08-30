@@ -60,23 +60,24 @@ from saathi.runtime import get_runtime  # noqa: E402
 # Presentation constants
 # ---------------------------------------------------------------------------
 
-# NHS design system palette (service-manual.nhs.uk/design-system/styles/colour).
-# Chosen deliberately: it is the only open design system with clinical-safety
-# governance behind it, its contrast ratios are specified rather than eyeballed,
-# and it reads to a clinician as healthcare software rather than as a dashboard.
+# Palette roles as CSS custom properties, following the data-viz method: the
+# chart/table body is written against ROLES, so a theme change is one block.
+# Brand values are the NHS design system's, which is the only open design system
+# with clinical-safety governance behind it and specified contrast ratios.
 NHS = {
     "blue": "#005eb8", "dark_blue": "#003087", "bright_blue": "#0072ce",
     "red": "#d5281b", "dark_red": "#8a1538", "orange": "#ed8b00",
     "warm_yellow": "#ffb81c", "yellow": "#ffeb3b", "green": "#007f3b",
-    "purple": "#330072", "text": "#212b32", "secondary_text": "#4c6272",
-    "border": "#d8dde0", "grey_4": "#e8edee", "grey_5": "#f0f4f5", "white": "#ffffff",
+    "purple": "#330072", "text": "#17232b", "secondary_text": "#5a6b76",
+    "border": "#e3e8ec", "grey_4": "#eef2f5", "grey_5": "#f4f6f8", "white": "#ffffff",
 }
 
-# Acuity uses NHS status colours. Never colour alone - always paired with the
-# number and the word, per the NHS accessibility guidance.
+# Acuity is a STATUS scale, not a categorical series. Per the data-viz rule,
+# status colour never carries meaning alone - every use pairs it with the level
+# number and the word.
 ACUITY_COLOR = {1: NHS["red"], 2: NHS["orange"], 3: NHS["warm_yellow"],
-                4: NHS["blue"], 5: NHS["secondary_text"]}
-ACUITY_TEXT = {1: "#ffffff", 2: "#ffffff", 3: NHS["text"], 4: "#ffffff", 5: "#ffffff"}
+                4: NHS["blue"], 5: "#6b7c87"}
+ACUITY_TEXT = {1: "#ffffff", 2: "#ffffff", 3: "#17232b", 4: "#ffffff", 5: "#ffffff"}
 ACUITY_NAME = {1: "Resuscitation", 2: "Emergent", 3: "Urgent", 4: "Less urgent", 5: "Non-urgent"}
 
 QUALITY_ICON = {"GOOD": "\u25cf", "ACCEPTABLE": "\u25cf", "DEGRADED": "\u25d0",
@@ -85,87 +86,232 @@ FRESH_ICON = {"CURRENT": "\u2713", "AGING": "\u26a0", "STALE": "\u26a0", "ABSENT
 
 CSS = """
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-  /* NHS design system. Frutiger is proprietary; Inter is the closest open
-     humanist face and keeps a generous x-height at small sizes. */
-  html, body, [class*="css"], .stMarkdown, button, input, select, textarea {
-      font-family: Inter, Arial, Helvetica, sans-serif !important;
-      color: #212b32;
+  :root {
+    --surface-page:#f4f6f8; --surface-card:#ffffff; --surface-sunk:#eef2f5;
+    --border:#e3e8ec; --border-strong:#cdd6dd;
+    --ink:#17232b; --ink-2:#5a6b76; --ink-3:#8194a0;
+    --brand:#005eb8; --brand-dark:#003087;
+    --good:#007f3b; --warn:#ffb81c; --serious:#ed8b00; --critical:#d5281b;
+    --r:8px; --r-sm:4px;
+    --shadow:0 1px 2px rgba(23,35,43,.06), 0 1px 1px rgba(23,35,43,.04);
+    --mono:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
   }
-  .stApp { background: #f0f4f5; }
-  .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1120px; }
-  html, body { font-size: 16px; }
 
-  h1 { font-size: 2.25rem !important; font-weight: 800 !important; letter-spacing: -0.01em;
-       margin-bottom: 0.1rem !important; color: #212b32; }
-  h2 { font-size: 1.6rem !important; font-weight: 700 !important; }
-  h3 { font-size: 1.35rem !important; font-weight: 700 !important; color: #212b32; }
-  h5 { margin: 1.6rem 0 0.5rem 0 !important; font-size: 0.8rem !important;
-       font-weight: 700 !important; text-transform: uppercase; letter-spacing: 0.08em;
-       color: #4c6272; }
+  /* Streamlit's own chrome is not part of this product. */
+  #MainMenu, header[data-testid="stHeader"], footer,
+  [data-testid="stToolbar"], [data-testid="stDecoration"],
+  [data-testid="stStatusWidget"], [data-testid="stAppDeployButton"] { display:none !important; }
 
-  /* NHS header bar. */
-  .nhs-header { background:#005eb8; border-radius:4px; padding:14px 20px; margin-bottom:16px;
-                color:#fff; display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
-  .nhs-header .brand { font-weight:800; font-size:1.35rem; letter-spacing:0.02em; color:#fff; }
-  .nhs-header .sub { font-size:0.84rem; opacity:0.93; color:#fff; }
+  html, body, [class*="css"], .stMarkdown, button, input, select, textarea {
+      font-family:Inter,-apple-system,"Segoe UI",Arial,sans-serif !important;
+      color:var(--ink); }
+  .stApp { background:var(--surface-page); }
+  .block-container { padding:1.1rem 2rem 3rem 2rem !important; max-width:1320px; }
+  html, body { font-size:15px; }
+  /* Tabular figures everywhere numbers line up in a column. */
+  .num, .tbl td, .kpi-value { font-variant-numeric:tabular-nums; }
 
-  /* NHS tag - status pill. Always accompanied by a word, never colour alone. */
-  .tag { display:inline-block; font-weight:700; border-radius:4px; padding:2px 9px;
-         font-size:0.85rem; letter-spacing:0.02em; text-transform:uppercase; }
+  h1 { font-size:1.9rem !important; font-weight:750 !important; letter-spacing:-.02em;
+       margin:0 0 .1rem 0 !important; }
+  h2 { font-size:1.4rem !important; font-weight:700 !important; letter-spacing:-.01em; }
+  h3 { font-size:1.1rem !important; font-weight:700 !important; }
+  h5 { margin:1.5rem 0 .55rem 0 !important; font-size:.72rem !important; font-weight:700 !important;
+       text-transform:uppercase; letter-spacing:.09em; color:var(--ink-3); }
 
-  /* NHS care card: coloured heading bar, white body, used by the NHS for
-     content with safety implications - which is exactly what a triage action is. */
-  .care { background:#fff; border-radius:4px; margin:14px 0 18px 0; }
-  .care-head { color:#fff; font-weight:800; font-size:1.05rem; padding:9px 18px;
-               border-radius:4px 4px 0 0; letter-spacing:0.03em; text-transform:uppercase; }
-  .care-body { padding:16px 18px 18px 18px; border:1px solid #d8dde0; border-top:none;
-               border-radius:0 0 4px 4px; font-size:1.32rem; line-height:1.45; font-weight:600; }
+  /* ---- top bar ---- */
+  .topbar { background:var(--surface-card); border:1px solid var(--border);
+            border-radius:var(--r); box-shadow:var(--shadow); padding:13px 20px;
+            margin-bottom:18px; display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  .topbar .mark { width:30px; height:30px; border-radius:7px; background:var(--brand);
+                  color:#fff; font-weight:800; font-size:.95rem; display:flex;
+                  align-items:center; justify-content:center; letter-spacing:-.02em; }
+  .topbar .name { font-weight:750; font-size:1.1rem; letter-spacing:-.01em; }
+  .topbar .ctx  { color:var(--ink-2); font-size:.84rem; }
+  .topbar .spacer { flex:1; }
 
-  /* Worklist row. */
-  .row { background:#fff; border:1px solid #d8dde0; border-radius:4px;
-         border-left-width:8px; border-left-style:solid; padding:11px 15px; margin-bottom:8px; }
-  .row-action { font-weight:800; font-size:1.05rem; letter-spacing:0.01em; }
-  .row-why { font-size:0.98rem; color:#212b32; }
-  .row-meta { font-size:0.8rem; color:#4c6272; }
+  /* ---- KPI tile ---- */
+  .kpi-row { display:grid; gap:10px; margin-bottom:6px; }
+  .kpi { background:var(--surface-card); border:1px solid var(--border);
+         border-radius:var(--r); box-shadow:var(--shadow); padding:13px 15px;
+         border-top:3px solid var(--border-strong); }
+  .kpi-label { font-size:.7rem; font-weight:700; text-transform:uppercase;
+               letter-spacing:.08em; color:var(--ink-3); margin-bottom:5px; }
+  .kpi-value { font-size:1.85rem; font-weight:750; line-height:1.05; letter-spacing:-.02em; }
+  .kpi-sub { font-size:.76rem; color:var(--ink-2); margin-top:4px; }
 
-  .panel { background:#fff; border:1px solid #d8dde0; border-radius:4px; padding:14px 16px; }
-  .tiny { font-size:0.8rem; color:#4c6272; line-height:1.4; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:0.8rem; }
+  /* ---- card ---- */
+  .card { background:var(--surface-card); border:1px solid var(--border);
+          border-radius:var(--r); box-shadow:var(--shadow); padding:16px 18px; margin-bottom:12px; }
+  .card-h { font-size:.72rem; font-weight:700; text-transform:uppercase;
+            letter-spacing:.09em; color:var(--ink-3); margin-bottom:10px; }
 
-  /* NHS inset text - a grey left rule, used for caveats. */
-  .inset { border-left:8px solid #4c6272; padding:6px 0 6px 16px; margin:12px 0; }
-  .banner { border-radius:4px; padding:11px 15px; font-weight:600; margin-bottom:10px;
-            border-left:8px solid; background:#fff; }
+  /* ---- table: thin rules, recessive header, no zebra ---- */
+  .tbl-wrap { background:var(--surface-card); border:1px solid var(--border);
+              border-radius:var(--r); box-shadow:var(--shadow); overflow:auto; margin-bottom:12px; }
+  .tbl { width:100%; border-collapse:collapse; font-size:.83rem; }
+  .tbl th { position:sticky; top:0; background:var(--surface-sunk); text-align:left;
+            font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em;
+            color:var(--ink-3); padding:9px 13px; border-bottom:1px solid var(--border);
+            white-space:nowrap; z-index:1; }
+  .tbl td { padding:8px 13px; border-bottom:1px solid var(--surface-sunk); color:var(--ink);
+            white-space:nowrap; }
+  .tbl tr:last-child td { border-bottom:none; }
+  .tbl tr:hover td { background:#f7fafc; }
+  .tbl td.r, .tbl th.r { text-align:right; }
 
-  /* NHS buttons: 4px radius with the signature pressed shadow. */
-  .stButton button { border-radius:4px !important; font-weight:700 !important;
-                     border:none !important; }
-  .stButton button[kind="primary"] { background:#007f3b !important; color:#fff !important;
-                     box-shadow: 0 4px 0 #00401e; }
-  .stButton button[kind="primary"]:active { transform:translateY(2px);
-                     box-shadow: 0 2px 0 #00401e; }
-  .stButton button[kind="secondary"] { background:#fff !important; color:#005eb8 !important;
-                     box-shadow: 0 4px 0 #d8dde0; border:2px solid #005eb8 !important; }
-  /* NHS focus state: a yellow block with a black underline. Unmistakable. */
-  .stButton button:focus-visible, a:focus-visible, summary:focus-visible {
-      outline:none !important; background:#ffeb3b !important; color:#212b32 !important;
-      box-shadow: 0 4px 0 #212b32 !important; }
+  /* ---- status pill ---- */
+  .tag { display:inline-block; font-weight:700; border-radius:var(--r-sm); padding:2px 8px;
+         font-size:.72rem; letter-spacing:.03em; text-transform:uppercase; white-space:nowrap; }
 
-  div[data-testid="stVerticalBlockBorderWrapper"] { background:#fff; border-radius:4px; }
-  .stTabs [data-baseweb="tab"] { padding-top:6px; padding-bottom:6px; font-weight:600; }
-  section[data-testid="stSidebar"] { background:#fff; border-right:1px solid #d8dde0; }
+  /* ---- NHS care card: coloured head + white body, for the triage action ---- */
+  .care { border-radius:var(--r); margin:14px 0 16px 0; box-shadow:var(--shadow); overflow:hidden; }
+  .care-head { color:#fff; font-weight:800; font-size:.95rem; padding:9px 18px;
+               letter-spacing:.05em; text-transform:uppercase; }
+  .care-body { padding:16px 18px; background:var(--surface-card);
+               border:1px solid var(--border); border-top:none;
+               font-size:1.22rem; line-height:1.45; font-weight:600; }
 
-  /* The attendant surface is a phone held by a frightened relative. */
-  .phone { max-width:460px; margin:0 auto; }
-  .phone-q { font-size:1.8rem; font-weight:700; line-height:1.3; margin:4px 0 20px 0; }
+  /* ---- worklist row ---- */
+  .row { background:var(--surface-card); border:1px solid var(--border);
+         border-left-width:5px; border-left-style:solid; border-radius:var(--r);
+         box-shadow:var(--shadow); padding:11px 15px; margin-bottom:7px; }
+  .row-action { font-weight:750; font-size:.98rem; letter-spacing:.01em; }
+  .row-why { font-size:.95rem; color:var(--ink); margin-top:1px; }
+  .row-meta { font-size:.76rem; color:var(--ink-2); margin-top:6px; }
+
+  .inset { border-left:4px solid var(--border-strong); padding:7px 0 7px 14px; margin:12px 0; }
+  .banner { border-radius:var(--r); padding:11px 15px; font-weight:600; margin-bottom:10px;
+            border-left:5px solid; background:var(--surface-card); border-top:1px solid var(--border);
+            border-right:1px solid var(--border); border-bottom:1px solid var(--border);
+            box-shadow:var(--shadow); font-size:.9rem; }
+  .tiny { font-size:.77rem; color:var(--ink-2); line-height:1.45; }
+  .mono { font-family:var(--mono); font-size:.78rem; }
+
+  /* ---- meter: segmented, replaces the stock progress bar ---- */
+  .meter { height:6px; border-radius:3px; background:var(--surface-sunk); overflow:hidden; }
+  .meter > i { display:block; height:100%; border-radius:3px; }
+
+  /* ---- controls ---- */
+  .stButton button { border-radius:var(--r-sm) !important; font-weight:650 !important;
+                     font-size:.85rem !important; border:1px solid var(--border-strong) !important;
+                     background:var(--surface-card); color:var(--ink); box-shadow:none !important;
+                     transition:background .12s, border-color .12s; }
+  .stButton button:hover { background:var(--surface-sunk); border-color:var(--ink-3) !important; }
+  .stButton button[kind="primary"] { background:var(--brand) !important; color:#fff !important;
+                     border-color:var(--brand) !important; }
+  .stButton button[kind="primary"]:hover { background:var(--brand-dark) !important; }
+  .stButton button:focus-visible { outline:3px solid #ffeb3b !important; outline-offset:1px;
+                     box-shadow:0 2px 0 var(--ink) !important; }
+  div[data-baseweb="select"] > div { border-radius:var(--r-sm) !important;
+                     border-color:var(--border-strong) !important; font-size:.85rem; }
+
+  /* ---- sidebar as a nav rail ---- */
+  section[data-testid="stSidebar"] { background:var(--surface-card);
+                     border-right:1px solid var(--border); }
+  section[data-testid="stSidebar"] .block-container { padding-top:1.2rem; }
+  section[data-testid="stSidebar"] [role="radiogroup"] { gap:2px; }
+  section[data-testid="stSidebar"] [role="radiogroup"] label { padding:7px 10px;
+                     border-radius:var(--r-sm); font-size:.87rem; font-weight:550;
+                     transition:background .12s; }
+  section[data-testid="stSidebar"] [role="radiogroup"] label:hover { background:var(--surface-sunk); }
+
+  /* ---- tabs ---- */
+  .stTabs [data-baseweb="tab-list"] { gap:1px; border-bottom:1px solid var(--border); }
+  .stTabs [data-baseweb="tab"] { padding:7px 13px !important; font-size:.83rem; font-weight:600;
+                     color:var(--ink-2); }
+  .stTabs [aria-selected="true"] { color:var(--brand) !important; }
+
+  div[data-testid="stVerticalBlockBorderWrapper"] { background:var(--surface-card);
+                     border-radius:var(--r); }
+  .stExpander { border:1px solid var(--border) !important; border-radius:var(--r) !important;
+                     background:var(--surface-card); box-shadow:var(--shadow); }
+  [data-testid="stExpander"] summary { font-size:.85rem; font-weight:650; }
+
+  /* ---- attendant phone surface ---- */
+  .phone { max-width:430px; margin:0 auto; }
+  .phone-q { font-size:1.65rem; font-weight:700; line-height:1.32; margin:2px 0 20px 0; }
 </style>
 """
 
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
+
+
+def esc(x: Any) -> str:
+    """Everything reaching an HTML component goes through here."""
+    return (str(x).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+def topbar(context: str, right: str = "") -> None:
+    st.markdown(
+        f'<div class="topbar"><div class="mark">S</div>'
+        f'<div><div class="name">SAATHI</div>'
+        f'<div class="ctx">{context}</div></div>'
+        f'<div class="spacer"></div><div class="ctx">{right}</div></div>',
+        unsafe_allow_html=True)
+
+
+def kpi_row(items: list[dict], cols: int | None = None) -> None:
+    """
+    A row of stat tiles. Each is label / value / sub, with an optional accent.
+
+    A tile is the right form when the number IS the answer - no plot earns its
+    space for a single scalar.
+    """
+    n = cols or len(items)
+    cells = []
+    for it in items:
+        accent = it.get("accent") or "var(--border-strong)"
+        sub = f'<div class="kpi-sub">{it["sub"]}</div>' if it.get("sub") else ""
+        cells.append(
+            f'<div class="kpi" style="border-top-color:{accent}">'
+            f'<div class="kpi-label">{esc(it["label"])}</div>'
+            f'<div class="kpi-value">{it["value"]}</div>{sub}</div>')
+    st.markdown(f'<div class="kpi-row" style="grid-template-columns:repeat({n},1fr)">'
+                + "".join(cells) + "</div>", unsafe_allow_html=True)
+
+
+def data_table(rows: list[dict], *, right: set[str] | None = None,
+               max_height: int | None = None, raw: set[str] | None = None) -> None:
+    """
+    A clean HTML table. Replaces st.dataframe, which renders as a spreadsheet
+    widget - wrong affordance for a read-only clinical table, and it fights the
+    surrounding type.
+
+    `raw` names columns whose values are pre-built HTML (status pills).
+    """
+    if not rows:
+        st.markdown('<div class="card"><span class="tiny">Nothing to show.</span></div>',
+                    unsafe_allow_html=True)
+        return
+    right, raw = right or set(), raw or set()
+    cols = list(rows[0].keys())
+    head = "".join(f'<th class="{"r" if c in right else ""}">{esc(c)}</th>' for c in cols)
+    body = []
+    for r in rows:
+        tds = []
+        for c in cols:
+            v = r.get(c, "")
+            cell = v if c in raw else esc("" if v is None else v)
+            tds.append(f'<td class="{"r" if c in right else ""}">{cell}</td>')
+        body.append("<tr>" + "".join(tds) + "</tr>")
+    style = f' style="max-height:{max_height}px"' if max_height else ""
+    st.markdown(f'<div class="tbl-wrap"{style}><table class="tbl"><thead><tr>{head}</tr></thead>'
+                f'<tbody>{"".join(body)}</tbody></table></div>', unsafe_allow_html=True)
+
+
+def meter(value: float, colour: str) -> str:
+    pct = max(0.0, min(1.0, float(value))) * 100
+    return f'<div class="meter"><i style="width:{pct:.0f}%;background:{colour}"></i></div>'
+
+
+def card(title: str, body_html: str) -> None:
+    st.markdown(f'<div class="card"><div class="card-h">{esc(title)}</div>{body_html}</div>',
+                unsafe_allow_html=True)
 
 
 def _v(x: Any) -> Any:
@@ -189,11 +335,6 @@ def acuity_chip(level: int, label: str = "") -> str:
 
 def tag(text: str, bg: str, fg: str = "#ffffff") -> str:
     return f'<span class="tag" style="background:{bg};color:{fg}">{text}</span>'
-
-
-def nhs_header(title: str, subtitle: str) -> None:
-    st.markdown(f'<div class="nhs-header"><span class="brand">{title}</span>'
-                f'<span class="sub">{subtitle}</span></div>', unsafe_allow_html=True)
 
 
 def care_card(heading: str, body: str, colour: str, fg: str = "#ffffff") -> None:
@@ -261,22 +402,34 @@ def contribution_note(e: dict) -> str:
 
 
 def confidence_row(conf: dict) -> None:
-    """Five named axes. Never collapsed into one number for a clinical user."""
-    cols = st.columns(5)
-    items = [("Signal quality", conf["signal_quality"]),
-             ("Completeness", conf["completeness"]),
-             ("Applicability", conf["applicability"]),
-             ("Channel agreement", conf["channel_agreement"])]
-    for col, (name, val) in zip(cols, items):
-        with col:
-            st.caption(name)
-            st.progress(min(1.0, max(0.0, float(val))), text=f"{val:.2f}")
-    with cols[4]:
-        st.caption("Calibration")
-        cal = conf.get("calibration_status", "UNKNOWN")
-        ok = str(cal).startswith("CALIBRATED")
-        st.markdown(f"{'✓' if ok else '⚠'} <span class='tiny'>{cal}</span>",
-                    unsafe_allow_html=True)
+    """
+    Five named axes, side by side. Never collapsed into one number for a
+    clinical user - the card's chip names the weakest axis instead of averaging.
+    """
+    axes = [("Signal quality", conf["signal_quality"]),
+            ("Completeness", conf["completeness"]),
+            ("Applicability", conf["applicability"]),
+            ("Channel agreement", conf["channel_agreement"])]
+    cells = []
+    for name, val in axes:
+        v = max(0.0, min(1.0, float(val)))
+        colour = ("var(--good)" if v >= 0.75 else
+                  "var(--warn)" if v >= 0.5 else "var(--critical)")
+        cells.append(
+            f'<div class="kpi" style="border-top-color:{colour}">'
+            f'<div class="kpi-label">{esc(name)}</div>'
+            f'<div class="kpi-value" style="font-size:1.4rem">{v:.2f}</div>'
+            f'<div style="margin-top:7px">{meter(v, colour)}</div></div>')
+    cal = str(conf.get("calibration_status", "UNKNOWN"))
+    ok = cal.startswith("CALIBRATED")
+    cells.append(
+        f'<div class="kpi" style="border-top-color:{"var(--good)" if ok else "var(--warn)"}">'
+        f'<div class="kpi-label">Calibration</div>'
+        f'<div style="font-size:1.05rem;font-weight:700;margin-top:2px">'
+        f'{"Calibrated" if ok else "Not calibrated"}</div>'
+        f'<div class="kpi-sub mono">{esc(cal)}</div></div>')
+    st.markdown('<div class="kpi-row" style="grid-template-columns:repeat(5,1fr)">'
+                + "".join(cells) + "</div>", unsafe_allow_html=True)
 
 
 def freshness_table(view: dict) -> None:
@@ -300,7 +453,7 @@ def freshness_table(view: dict) -> None:
                      "Max stale": "—", "Freshness": "ABSENT", "Quality": "—",
                      "Passed floor": "—"})
     if rows:
-        st.dataframe(rows, width='stretch', hide_index=True)
+        data_table(rows)
     st.caption("Staleness drives behaviour, not decoration: a channel past its threshold is "
                "removed from the score, lowers confidence, and shortens the re-check interval.")
 
@@ -688,8 +841,7 @@ def _do_override(rt, p: Principal, pid: str, new_level: int, reason: str) -> Non
 def ewer_panel(ewer: dict) -> None:
     from saathi.core.models import EWERComponents
     comps = ewer_mod.format_components(EWERComponents(**ewer))
-    st.dataframe([{"Component": n, "Raw": r, "Weighted": w} for n, r, w in comps],
-                 width='stretch', hide_index=True)
+    data_table([{"Component": n, "Raw": r, "Weighted": w} for n, r, w in comps])
     st.markdown(f"**EWER {ewer['rank_value']:.2f}** — a ranking index. "
                 "Not a probability, not a clinical certainty, not a triage level. "
                 "It orders patients within an acuity level; it never sets one.")
@@ -737,16 +889,22 @@ def physician_view(rt) -> None:
     st.markdown("##### Floor posture")
     if summary["surge_active"]:
         banner(f"SURGE ACTIVE — {summary['surge_message']}", "#d94f00")
-    m = st.columns(6)
-    m[0].metric("In queue", summary["n"])
-    m[1].metric("Past safe wait", len(summary["sla_breached"]),
-                delta=None if not summary["sla_breached"] else "action needed",
-                delta_color="inverse")
-    m[2].metric("Red flags", len(summary["red_flagged"]))
-    m[3].metric("Escalated in wait", len(summary["escalated_since_arrival"]))
-    m[4].metric("Cannot assess", len(summary["abstained"]))
-    m[5].metric("Alert budget", f"{summary['alert_budget'].get('alerts_per_hour', '?')}/h",
-                help=f"presentation: {summary['alert_budget'].get('presentation', '')}")
+    kpi_row([
+        {"label": "In queue", "value": summary["n"], "sub": "patients waiting"},
+        {"label": "Past safe wait", "value": len(summary["sla_breached"]),
+         "sub": "beyond the limit for their level",
+         "accent": "var(--critical)" if summary["sla_breached"] else "var(--border-strong)"},
+        {"label": "Red flags", "value": len(summary["red_flagged"]),
+         "sub": "deterministic rules fired",
+         "accent": "var(--critical)" if summary["red_flagged"] else "var(--border-strong)"},
+        {"label": "Escalated in wait", "value": len(summary["escalated_since_arrival"]),
+         "sub": "changed after arrival", "accent": "var(--serious)"},
+        {"label": "Cannot assess", "value": len(summary["abstained"]),
+         "sub": "abstained, human required",
+         "accent": "#330072" if summary["abstained"] else "var(--border-strong)"},
+        {"label": "Alert budget", "value": f"{summary['alert_budget'].get('alerts_per_hour', '?')}/h",
+         "sub": summary["alert_budget"].get("presentation", "").replace("_", " ")},
+    ])
 
     st.markdown("##### Whole-queue risk")
     rows = []
@@ -767,7 +925,7 @@ def physician_view(rt) -> None:
             "Route": view["model_route"],
             "Red flag": ",".join(r["rule_id"] for r in view["red_flags"]),
         })
-    st.dataframe(rows, width='stretch', hide_index=True, height=330)
+    data_table(rows)
 
     left, right = st.columns(2, gap="large")
 
@@ -830,11 +988,9 @@ def physician_view(rt) -> None:
         o3.metric("Upgrades", int(rate.get("upgrades", 0)))
         rows = rt.store.overrides()
         if rows:
-            st.dataframe([{k: v for k, v in r.items() if k != "payload"} for r in rows],
-                         width='stretch', hide_index=True, height=180)
+            data_table([{k: v for k, v in r.items() if k != "payload"} for r in rows])
             st.markdown("**Reason clusters** — where the model systematically disagrees with staff:")
-            st.dataframe(rt.store.override_reason_clusters(), width='stretch',
-                         hide_index=True)
+            data_table(rt.store.override_reason_clusters())
         else:
             st.caption("No overrides recorded yet. Capture one from the nurse view — the full "
                        "audit payload is written and appears here.")
@@ -844,8 +1000,8 @@ def physician_view(rt) -> None:
 
         st.markdown("##### Surge posture — what the system changed about itself")
         surge = get_contract().surge
-        st.dataframe([{"Behaviour": k, "Setting": json.dumps(v) if isinstance(v, (dict, list)) else v}
-                      for k, v in surge.items()], width='stretch', hide_index=True)
+        data_table([{"Behaviour": k, "Setting": json.dumps(v) if isinstance(v, (dict, list)) else v}
+                      for k, v in surge.items()])
 
 
 # ---------------------------------------------------------------------------
@@ -951,24 +1107,28 @@ def admin_view(rt) -> None:
     with tabs[0]:
         rate = rt.store.override_rate()
         rej = rt.store.rejections()
-        k = st.columns(4)
-        k[0].metric("Override rate", f"{rate.get('override_rate', 0.0):.1%}",
-                    help="The headline adoption and trust metric, trended per shift.")
-        k[1].metric("Overrides", int(rate.get("overrides", 0)),
-                    help=f"against {int(rate.get('contracts_generated', 0))} contracts generated")
-        k[2].metric("Validator rejections", len(rej))
-        k[3].metric("Abstention rate",
-                    f"{sum(1 for a in rt.assessments.values() if a.abstention.abstained) / max(1, len(rt.assessments)):.1%}")
+        abst = sum(1 for a in rt.assessments.values() if a.abstention.abstained)
+        kpi_row([
+            {"label": "Override rate", "value": f"{rate.get('override_rate', 0.0):.1%}",
+             "sub": "headline trust metric, trended per shift", "accent": "var(--brand)"},
+            {"label": "Overrides", "value": int(rate.get("overrides", 0)),
+             "sub": f"of {int(rate.get('contracts_generated', 0))} contracts generated"},
+            {"label": "Validator rejections", "value": len(rej),
+             "sub": "claims caught before display",
+             "accent": "var(--serious)" if rej else "var(--border-strong)"},
+            {"label": "Abstention rate", "value": f"{abst / max(1, len(rt.assessments)):.1%}",
+             "sub": f"{abst} patients the system declined to score",
+             "accent": "var(--warn)" if abst else "var(--border-strong)"},
+        ])
         st.caption("A validator that has never fired is a validator nobody believes. "
                    "See the Judge surface for a live rejection.")
         if rej:
-            st.dataframe(rej[:20], width='stretch', hide_index=True)
+            data_table(rej[:20])
 
     with tabs[1]:
         shown = {k_: v for k_, v in by_band.items() if v["n"] >= min_cell}
         suppressed = [k_ for k_, v in by_band.items() if v["n"] < min_cell]
-        st.dataframe([{"Age band": k_, **v} for k_, v in sorted(shown.items())],
-                     width='stretch', hide_index=True)
+        data_table([{"Age band": k_, **v} for k_, v in sorted(shown.items())])
         if suppressed:
             st.warning(f"Cells suppressed for re-identification risk (n < {min_cell}): "
                        f"{', '.join(suppressed)}")
@@ -978,8 +1138,7 @@ def admin_view(rt) -> None:
 
     with tabs[2]:
         s = summarise(rt.store.telemetry_rows(), rt.llm.backend)
-        st.dataframe([{"Metric": k_, "Value": v} for k_, v in s.as_rows()],
-                     width='stretch', hide_index=True)
+        data_table([{"Metric": k_, "Value": v} for k_, v in s.as_rows()])
         if s.budget_met:
             banner(f"Decision path p95 = {s.decision_p95_ms:.1f} ms against a "
                    f"{s.budget_ms:.0f} ms budget — MET, with the LLM excluded. "
@@ -987,12 +1146,10 @@ def admin_view(rt) -> None:
         else:
             banner(f"Decision path p95 = {s.decision_p95_ms:.1f} ms — BUDGET BREACHED.", "#b3001b")
         st.markdown("**Per-stage latency (ms)**")
-        st.dataframe([{"Stage": k_, **v} for k_, v in s.per_stage.items()],
-                     width='stretch', hide_index=True)
+        data_table([{"Stage": k_, **v} for k_, v in s.per_stage.items()])
         st.markdown("**Projected annual LLM run-rate from the measured unit cost**")
-        st.dataframe([{"Deployment": n, "Visits/year": v, "USD/year": cst}
-                      for n, v, cst in projected_costs(s.cost_per_patient_usd)],
-                     width='stretch', hide_index=True)
+        data_table([{"Deployment": n, "Visits/year": v, "USD/year": cst}
+                      for n, v, cst in projected_costs(s.cost_per_patient_usd)])
         if s.llm_backend == "stub":
             st.caption("LLM backend is the offline stub, so token counts are measured against a "
                        "deterministic renderer and cost is priced from those counts. Labelled, "
@@ -1004,7 +1161,7 @@ def admin_view(rt) -> None:
     with tabs[4]:
         st.markdown("##### Access decisions written by this session")
         ev = rt.store.access_events(limit=150)
-        st.dataframe(ev, width='stretch', hide_index=True, height=380)
+        data_table(ev)
         denies = rt.store.access_events(limit=50, decision="DENY")
         st.caption(f"{len(denies)} DENY event(s) in the last 50 rows. Every access decision "
                    "records role, subject, resource, fields, decision, reason and timestamp.")
@@ -1028,12 +1185,11 @@ def _eval_subgroups() -> None:
     st.markdown("##### Held-out sensitivity by subgroup, with 95% intervals")
     for name, rows in d["subgroups"].items():
         st.markdown(f"**By {name}**")
-        st.dataframe([{name.title(): k,
+        data_table([{name.title(): k,
                        "Sensitivity": f"{v[0]:.3f}",
                        "95% CI": f"[{v[1]:.3f}, {v[2]:.3f}]",
                        "Interval width": round(v[2] - v[1], 3)}
-                      for k, v in rows.items()],
-                     width='stretch', hide_index=True)
+                      for k, v in rows.items()])
     st.caption("Wide intervals are reported rather than hidden. A subgroup whose interval spans "
                "most of the unit line has not been measured, and saying so is the honest "
                "reading of it.")
@@ -1117,7 +1273,7 @@ def _demo_age_bands() -> None:
         rows.append({"Age band": c.age_band_label(b), "Verdict": _v(band),
                      "Normal": str(spec.get("normal")), "Concerning": str(spec.get("concerning")),
                      "Critical": str(spec.get("critical")), "Note": note or ""})
-    st.dataframe(rows, width='stretch', hide_index=True)
+    data_table(rows)
     st.markdown(f"**{cross_band_explainer(c, concept, value, c.age_band_ids)}**")
     st.caption("Thresholds are a function of age band and live in the contract YAML. There is "
                "no vital-sign threshold anywhere in the Python source — the scoring engine "
@@ -1194,7 +1350,7 @@ def _demo_replay(rt) -> None:
                 "Signal quality": round(s.confidence.signal_quality, 2),
                 "Red flags": ",".join(r.rule_id for r in s.red_flags),
             })
-        st.dataframe(rows, width='stretch', hide_index=True)
+        data_table(rows)
         st.line_chart({"acuity (lower = more urgent)": [r["Acuity"] for r in rows]})
         first, last = series[0], series[-1]
         if last.acuity_current.level < first.acuity_current.level:
@@ -1294,7 +1450,7 @@ def _demo_validator(rt) -> None:
     rej = rt.store.rejections(50)
     if rej:
         st.markdown("##### Rejection log")
-        st.dataframe(rej, width='stretch', hide_index=True)
+        data_table(rej)
 
 
 def _demo_rbac(rt) -> None:
@@ -1316,7 +1472,7 @@ def _demo_rbac(rt) -> None:
         except Exception as exc:
             st.warning(f"{type(exc).__name__}: {getattr(exc, 'detail', exc)}")
         st.markdown("**Audit rows written by that call:**")
-        st.dataframe(rt.store.access_events(limit=6), width='stretch', hide_index=True)
+        data_table(rt.store.access_events(limit=6))
     st.markdown("---")
     st.markdown("##### What the attendant surface is structurally incapable of showing")
     apid = st.selectbox("Patient", [x.patient_id for x in rt.queue()][:25], index=0,
@@ -1391,7 +1547,7 @@ def _demo_cohort(rt) -> None:
             "Escalated": (a.acuity_current.level < a.acuity_arrival.level) if a else None,
             "Now": a.acuity_current.level if a else None,
         })
-    st.dataframe(rows, width='stretch', hide_index=True, height=520)
+    data_table(rows, max_height=560)
     n_surge = sum(1 for p in rt.profiles.values() if not p.is_mandatory_case)
     st.caption(f"{len(rows)} hand-designed cases plus {n_surge} procedurally generated arrivals "
                f"for the 3× surge fill. The designed cases are excluded from the model's "
@@ -1447,14 +1603,15 @@ def main() -> None:
 
     c = get_contract()
     with st.sidebar:
-        st.markdown(f'<div style="background:{NHS["blue"]};color:#fff;border-radius:4px;'
-                    f'padding:12px 14px;margin-bottom:14px">'
-                    f'<div style="font-weight:800;font-size:1.2rem;color:#fff">SAATHI</div>'
-                    f'<div style="font-size:0.78rem;opacity:0.93;color:#fff">'
-                    f'Triage assistance for the waiting interval</div></div>',
-                    unsafe_allow_html=True)
-        st.markdown('<div class="tiny">Clinical decision support. It raises urgency and can '
-                    'never lower it. It does not diagnose.</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+            '<div class="mark" style="width:28px;height:28px;border-radius:7px;'
+            'background:var(--brand);color:#fff;font-weight:800;display:flex;'
+            'align-items:center;justify-content:center;font-size:.9rem">S</div>'
+            '<div style="font-weight:750;font-size:1.05rem;letter-spacing:-.01em">SAATHI</div>'
+            '</div>'
+            '<div class="tiny" style="margin-bottom:14px">Clinical decision support. Raises '
+            'urgency, never lowers it. Does not diagnose.</div>', unsafe_allow_html=True)
         tier = st.selectbox("Deployment tier", c.tiers, index=0)
         rt = load_runtime(tier)
 
@@ -1473,8 +1630,15 @@ def main() -> None:
 
         st.markdown("---")
         s = rt.floor_summary()
-        st.metric("Patients", s["n"])
-        st.metric("Surge", f"{s['surge_ratio']:.1f}×" if s["surge_active"] else "normal")
+        surge_txt = f"{s['surge_ratio']:.1f}x" if s["surge_active"] else "normal"
+        st.markdown(
+            '<div class="card" style="padding:12px 14px">'
+            '<div class="card-h" style="margin-bottom:7px">Floor</div>'
+            '<div style="display:flex;justify-content:space-between;font-size:.85rem">'
+            f'<span>Patients</span><b class="num">{s["n"]}</b></div>'
+            '<div style="display:flex;justify-content:space-between;font-size:.85rem;margin-top:3px">'
+            f'<span>Surge</span><b>{surge_txt}</b></div></div>',
+            unsafe_allow_html=True)
         st.caption(f"contract v{c.version} · grammar v{c.grammar_version} · "
                    f"rules v{c.ruleset_version} · cost v{c.policy_version}")
         st.caption("Every patient, vital sign and signal-quality trace in this demo is "
@@ -1488,7 +1652,13 @@ def main() -> None:
         "Administrator / quality lead": "Governance · aggregate only",
         "Judge surface": "Inspection harness · not a clinical role",
     }.get(persona, "")
-    nhs_header("SAATHI", subtitle)
+    right_bits = [f"{s['n']} in queue"]
+    if s["surge_active"]:
+        right_bits.append(f"SURGE {s['surge_ratio']:.1f}x")
+    right_bits.append(f"{tier.replace('_', ' ').title()}")
+    right_bits.append("LLM on" if rt.llm.enabled else "LLM off")
+    right_bits.append(f"contract v{c.version}")
+    topbar(subtitle, right=" &nbsp;·&nbsp; ".join(right_bits))
 
     if persona == "Triage nurse":
         nurse_view(rt)
