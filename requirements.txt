@@ -12,7 +12,10 @@ httpx==0.28.1
 xgboost==3.2.0
 scikit-learn==1.9.0
 numpy==2.2.6
-pandas==2.2.2
+# 2.2.3 is the FIRST pandas release with cp313 wheels. On 2.2.2 a Python 3.13
+# host has to compile pandas from source, which on a one-CPU cloud container
+# takes upwards of ten minutes and usually fails outright. Do not pin lower.
+pandas==2.2.3
 
 # NOTE: the `shap` package is deliberately NOT a dependency. Feature attribution
 # uses xgboost's own exact TreeSHAP via `pred_contribs=True` (see
